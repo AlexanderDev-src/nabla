@@ -1,13 +1,12 @@
 <h1 align="center">nabla</h1>
 
 <p align="center">
-  A tiny reverse-mode autodiff engine and neural network library in C++17.<br>
+  A tiny reverse-mode autodiff engine and neural network library in C++23.<br>
   Header-only, zero dependencies.
 </p>
 
 <p align="center">
-  <a href="https://github.com/AlexanderDev-src/nabla/actions"><img src="https://github.com/AlexanderDev-src/nabla/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/C%2B%2B-17-blue.svg" alt="C++17">
+  <img src="https://img.shields.io/badge/C%2B%2B-17-blue.svg" alt="C++23">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT"></a>
 </p>
 
