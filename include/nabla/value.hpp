@@ -1,4 +1,3 @@
-
 #pragma once
 #include <functional>
 #include <memory>
@@ -23,15 +22,17 @@ class Value {
     std::shared_ptr<Node> node_;
 
   public:
-    explicit Value(float d) : node_(std::make_shared<Node>(d)) {}
+    Value(float d) : node_(std::make_shared<Node>(d)) {}
 
     float data() const { return node_->data; }
     float grad() const { return node_->grad; }
 
     friend Value operator+(const Value &a, const Value &b);
     friend Value operator*(const Value &a, const Value &b);
+    friend Value operator-(const Value &a, const Value &b);
 
     void backward() const;
+    void step(float lr) { node_->data -= lr * node_->grad; }
 };
 
 //
@@ -46,6 +47,18 @@ inline Value operator+(const Value &a, const Value &b) {
     out->backward_fn = [a_node, b_node](float upstream) {
         a_node->grad += upstream;
         b_node->grad += upstream;
+    };
+    return Value(out);
+}
+
+inline Value operator-(const Value &a, const Value &b) {
+    auto out = std::make_shared<Node>(a.node_->data - b.node_->data);
+    auto a_node = a.node_;
+    auto b_node = b.node_;
+    out->parents = {a_node, b_node};
+    out->backward_fn = [a_node, b_node](float upstream) {
+        a_node->grad += upstream;
+        b_node->grad -= upstream;
     };
     return Value(out);
 }
