@@ -2,6 +2,7 @@
 #pragma once
 #include <functional>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 namespace nabla {
@@ -30,7 +31,7 @@ class Value {
     friend Value operator+(const Value &a, const Value &b);
     friend Value operator*(const Value &a, const Value &b);
 
-    void backward();
+    void backward() const;
 };
 
 //
@@ -62,6 +63,39 @@ inline Value operator*(const Value &a, const Value &b) {
         b_node->grad += db;
     };
     return Value(out);
+}
+
+// AHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+
+inline void Value::backward() const {
+    std::vector<Node *> order;
+    std::unordered_set<const Node *> visited;
+    std::vector<std::pair<Node *, std::size_t>> stack;
+
+    stack.emplace_back(node_.get(), 0);
+    visited.insert(node_.get());
+    while (!stack.empty()) {
+        auto &[n, i] = stack.back();
+        if (i < n->parents.size()) {
+            Node *next = n->parents[i++].get();
+            if (visited.insert(next).second) {
+                stack.emplace_back(next, 0);
+            }
+        } else {
+            order.push_back(n);
+            stack.pop_back();
+        }
+    }
+    for (Node *n : order) {
+        n->grad = 0.0f;
+    }
+    node_->grad = 1.0f;
+
+    for (auto it = order.rbegin(); it != order.rend(); ++it) {
+        if ((*it)->backward_fn) {
+            (*it)->backward_fn((*it)->grad);
+        }
+    }
 }
 
 } // namespace nabla
