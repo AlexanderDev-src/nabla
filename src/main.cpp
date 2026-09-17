@@ -1,6 +1,6 @@
 #include <iostream>
 
 int main() {
-  std::cout << "Starting nabla..." << std::endl;
+  std::cout << "Neural Network" << std::endl;
   return 0;
 }
