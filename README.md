@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/C%2B%2B-17-blue.svg" alt="C++23">
+  <img src="https://img.shields.io/badge/C%2B%2B-23-blue.svg" alt="C++23">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT"></a>
 </p>
 
