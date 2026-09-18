@@ -1,16 +1,16 @@
 #pragma once
 #include <bits/stdc++.h>
 
-namespace nable {
+namespace nabla {
 
 struct TensorImpl {
     std::size_t rows, cols;
     std::vector<float> data;
-    std::vector<float> grid;
+    std::vector<float> grad;
 
     TensorImpl(std::size_t rows, std::size_t cols)
         : rows(rows), cols(cols), data(rows * cols, 0.0f),
-          grid(rows * cols, 0.0f) {} // Constructor
+          grad(rows * cols, 0.0f) {} // Constructor
 };
 
 class Tensor {
@@ -25,4 +25,4 @@ class Tensor {
     explicit Tensor(std::shared_ptr<TensorImpl> impl) : impl_(impl) {}
     std::shared_ptr<TensorImpl> impl_;
 };
-} // namespace nable
+} // namespace nabla
