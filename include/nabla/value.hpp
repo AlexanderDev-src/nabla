@@ -15,21 +15,21 @@ struct Node {
     explicit Node(float d) : data(d) {}
 };
 
-class Value {
+class Scalar {
 
   private:
-    explicit Value(std::shared_ptr<Node> n) : node_(std::move(n)) {}
+    explicit Scalar(std::shared_ptr<Node> n) : node_(std::move(n)) {}
     std::shared_ptr<Node> node_;
 
   public:
-    Value(float d) : node_(std::make_shared<Node>(d)) {}
+    Scalar(float d) : node_(std::make_shared<Node>(d)) {}
 
     float data() const { return node_->data; }
     float grad() const { return node_->grad; }
 
-    friend Value operator+(const Value &a, const Value &b);
-    friend Value operator*(const Value &a, const Value &b);
-    friend Value operator-(const Value &a, const Value &b);
+    friend Scalar operator+(const Scalar &a, const Scalar &b);
+    friend Scalar operator*(const Scalar &a, const Scalar &b);
+    friend Scalar operator-(const Scalar &a, const Scalar &b);
 
     void backward() const;
     void step(float lr) { node_->data -= lr * node_->grad; }
@@ -39,7 +39,7 @@ class Value {
 // Now 01:41 I don't know wtf that i'm doing rn. - Alex
 //
 
-inline Value operator+(const Value &a, const Value &b) {
+inline Scalar operator+(const Scalar &a, const Scalar &b) {
     auto out = std::make_shared<Node>(a.node_->data + b.node_->data);
     auto a_node = a.node_;
     auto b_node = b.node_;
@@ -48,10 +48,10 @@ inline Value operator+(const Value &a, const Value &b) {
         a_node->grad += upstream;
         b_node->grad += upstream;
     };
-    return Value(out);
+    return Scalar(out);
 }
 
-inline Value operator-(const Value &a, const Value &b) {
+inline Scalar operator-(const Scalar &a, const Scalar &b) {
     auto out = std::make_shared<Node>(a.node_->data - b.node_->data);
     auto a_node = a.node_;
     auto b_node = b.node_;
@@ -60,10 +60,10 @@ inline Value operator-(const Value &a, const Value &b) {
         a_node->grad += upstream;
         b_node->grad -= upstream;
     };
-    return Value(out);
+    return Scalar(out);
 }
 
-inline Value operator*(const Value &a, const Value &b) {
+inline Scalar operator*(const Scalar &a, const Scalar &b) {
     auto out = std::make_shared<Node>(a.node_->data * b.node_->data);
     auto a_node = a.node_;
     auto b_node = b.node_;
@@ -75,12 +75,12 @@ inline Value operator*(const Value &a, const Value &b) {
         a_node->grad += da;
         b_node->grad += db;
     };
-    return Value(out);
+    return Scalar(out);
 }
 
 // AHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 
-inline void Value::backward() const {
+inline void Scalar::backward() const {
     std::vector<Node *> order;
     std::unordered_set<const Node *> visited;
     std::vector<std::pair<Node *, std::size_t>> stack;
