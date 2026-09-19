@@ -1,7 +1,9 @@
 #pragma once
 #include <cstddef>
+#include <initializer_list>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 namespace nabla {
