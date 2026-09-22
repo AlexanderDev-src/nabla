@@ -1,5 +1,5 @@
 #pragma once
-#include "nabla/tensor.hpp"
+#include "nabla/autograd.hpp"
 
 #include <cstddef>
 #include <stdexcept>
@@ -18,7 +18,7 @@ inline Tensor matmul(const Tensor &a, const Tensor &b) {
                                     " @ " + shape_str(b));
     }
 
-    auto out = Tensor::zeros(a.rows(), b.cols());
+    auto out = make_node(a.rows(), b.cols(), {a, b});
 
     for (std::size_t i = 0; i < a.rows(); ++i) {
         for (std::size_t j = 0; j < b.cols(); ++j) {
@@ -40,7 +40,7 @@ inline Tensor add(const Tensor &a, const Tensor &b) {
                                     " + " + shape_str(b));
     }
 
-    auto out = Tensor::zeros(a.rows(), a.cols());
+    auto out = make_node(a.rows(), a.cols(), {a, b});
     for (std::size_t i = 0; i < a.rows(); ++i) {
         const std::size_t bi = (b.rows() == 1) ? 0 : i;
         for (std::size_t j = 0; j < a.cols(); ++j) {

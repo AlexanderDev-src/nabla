@@ -144,6 +144,19 @@ int main() {
         CHECK(threw);
     }
 
+    // make_node: the result needs grad when any parent does
+    {
+        auto w = Tensor::zeros(2, 2).set_requires_grad(true);
+        auto x = Tensor::zeros(2, 2);
+        auto y = matmul(x, w);
+        CHECK(y.requires_grad());
+        CHECK(y.impl()->parents.size() == 2);
+
+        auto z = add(x, x);
+        CHECK(!z.requires_grad());
+        CHECK(z.impl()->parents.empty());
+    }
+
     if (failures) {
         printf("\n%d FAILED\n", failures);
     } else {

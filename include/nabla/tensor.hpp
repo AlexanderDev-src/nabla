@@ -100,6 +100,11 @@ class Tensor {
         return impl_->grad[r * impl_->cols + c];
     }
 
+    const std::shared_ptr<TensorImpl> &impl() const { return impl_; }
+    static Tensor from_impl(std::shared_ptr<TensorImpl> impl) {
+        return Tensor(std::move(impl));
+    }
+
   private:
     explicit Tensor(std::shared_ptr<TensorImpl> impl) : impl_(impl) {}
     std::shared_ptr<TensorImpl> impl_;
