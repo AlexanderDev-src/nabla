@@ -3,4 +3,3 @@ compile_commands.json
 .cache/
 *.o
 *.out
-tests/
