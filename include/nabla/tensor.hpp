@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <random>
@@ -13,6 +14,9 @@ struct TensorImpl {
     std::size_t rows, cols;
     std::vector<float> data;
     std::vector<float> grad;
+    bool requires_grad = false;
+    std::vector<std::shared_ptr<TensorImpl>> parents;
+    std::function<void(const std::vector<float> &upstream)> backward_fn;
 
     TensorImpl(std::size_t rows, std::size_t cols)
         : rows(rows), cols(cols), data(rows * cols, 0.0f),
@@ -83,7 +87,17 @@ class Tensor {
         return Tensor(impl);
     }
     Tensor clone() const {
-        return Tensor(std::make_shared<TensorImpl>(*impl_));
+        auto impl = std::make_shared<TensorImpl>(impl_->rows, impl_->cols);
+        impl->data = impl_->data;
+        return Tensor(impl);
+    }
+    bool requires_grad() const { return impl_->requires_grad; }
+    Tensor &set_requires_grad(bool on) {
+        impl_->requires_grad = on;
+        return *this;
+    }
+    float grad_at(std::size_t r, std::size_t c) const {
+        return impl_->grad[r * impl_->cols + c];
     }
 
   private:
