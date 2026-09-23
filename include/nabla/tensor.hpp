@@ -104,6 +104,7 @@ class Tensor {
     static Tensor from_impl(std::shared_ptr<TensorImpl> impl) {
         return Tensor(std::move(impl));
     }
+    void backward() const;
 
   private:
     explicit Tensor(std::shared_ptr<TensorImpl> impl) : impl_(impl) {}

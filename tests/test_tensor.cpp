@@ -157,6 +157,39 @@ int main() {
         CHECK(z.impl()->parents.empty());
     }
 
+    // backward: the root is seeded with 1.0 in every element
+    {
+        auto w = Tensor::zeros(2, 3).set_requires_grad(true);
+        auto x = Tensor::zeros(4, 2);
+        auto y = matmul(x, w);
+        y.backward();
+        CHECK_NEAR(y.grad_at(0, 0), 1.0f);
+        CHECK_NEAR(y.grad_at(3, 2), 1.0f);
+    }
+
+    // backward: a tensor that does not require grad refuses
+    {
+        auto x = Tensor::zeros(2, 2);
+        bool threw = false;
+        try {
+            x.backward();
+        } catch (const std::logic_error &) {
+            threw = true;
+        }
+        CHECK(threw);
+    }
+
+    // backward: a 10000-deep chain does not overflow the stack
+    {
+        auto b = Tensor::zeros(1, 1).set_requires_grad(true);
+        Tensor y = b;
+        for (int k = 0; k < 10000; ++k) {
+            y = add(y, b);
+        }
+        y.backward();
+        CHECK_NEAR(y.grad_at(0, 0), 1.0f);
+    }
+
     if (failures) {
         printf("\n%d FAILED\n", failures);
     } else {
