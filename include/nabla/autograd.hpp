@@ -27,7 +27,6 @@ inline Tensor make_node(std::size_t rows, std::size_t cols,
         for (const auto &p : parents) {
             impl->parents.push_back(p.impl());
         }
-        return Tensor::from_impl(impl);
     }
 
     return Tensor::from_impl(impl);

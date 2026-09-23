@@ -179,7 +179,29 @@ int main() {
         CHECK(threw);
     }
 
-    // backward: a 10000-deep chain does not overflow the stack
+    // add backward: [3x2] + [1x2], the bias row sums the grad of all 3 rows
+    {
+        auto a = Tensor::from(3, 2, {1, 2, 3, 4, 5, 6}).set_requires_grad(true);
+        auto bias = Tensor::from(1, 2, {10, 20}).set_requires_grad(true);
+        auto c = add(a, bias);
+        c.backward();
+        CHECK_NEAR(a.grad_at(0, 0), 1.0f);
+        CHECK_NEAR(a.grad_at(2, 1), 1.0f);
+        CHECK_NEAR(bias.grad_at(0, 0), 3.0f);
+        CHECK_NEAR(bias.grad_at(0, 1), 3.0f);
+    }
+
+    // add backward: add(x, x) reaches x twice, so both paths accumulate
+    {
+        auto x = Tensor::from(2, 2, {1, 2, 3, 4}).set_requires_grad(true);
+        auto y = add(x, x);
+        y.backward();
+        CHECK_NEAR(x.grad_at(0, 0), 2.0f);
+        CHECK_NEAR(x.grad_at(1, 1), 2.0f);
+    }
+
+    // backward: a 10000-deep chain does not overflow the stack, and b,
+    // which is added 10001 times, collects a grad of 1 from each use
     {
         auto b = Tensor::zeros(1, 1).set_requires_grad(true);
         Tensor y = b;
@@ -188,6 +210,7 @@ int main() {
         }
         y.backward();
         CHECK_NEAR(y.grad_at(0, 0), 1.0f);
+        CHECK_NEAR(b.grad_at(0, 0), 10001.0f);
     }
 
     if (failures) {

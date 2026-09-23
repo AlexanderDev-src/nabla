@@ -47,6 +47,24 @@ inline Tensor add(const Tensor &a, const Tensor &b) {
             out.at(i, j) = a.at(i, j) + b.at(bi, j);
         }
     }
+    if (out.requires_grad()) {
+        auto ai = a.impl();
+        auto bimpl = b.impl();
+        out.impl()->backward_fn = [ai, bimpl](const std::vector<float> &g) {
+            const std::size_t rows = ai->rows, cols = ai->cols;
+            for (std::size_t i = 0; i < rows; ++i) {
+                std::size_t bi = (bimpl->rows == 1) ? 0 : i;
+                for (std::size_t j = 0; j < cols; ++j) {
+                    if (ai->requires_grad) {
+                        ai->grad[i * cols + j] += g[i * cols + j];
+                    }
+                    if (bimpl->requires_grad) {
+                        bimpl->grad[bi * bimpl->cols + j] += g[i * cols + j];
+                    }
+                }
+            }
+        };
+    }
     return out;
 }
 
