@@ -9,9 +9,30 @@
 
 namespace nabla {
 
+inline thread_local bool grad_enabled = true;
+
+class NoGradGuard {
+  public:
+    NoGradGuard() {
+        prev_ = grad_enabled;
+        grad_enabled = false;
+    }
+    ~NoGradGuard() { grad_enabled = prev_; }
+
+    NoGradGuard(const NoGradGuard &) = delete;
+    NoGradGuard &operator=(const NoGradGuard &) = delete;
+
+  private:
+    bool prev_ = true;
+};
+
 inline Tensor make_node(std::size_t rows, std::size_t cols,
                         std::initializer_list<Tensor> parents) {
     auto impl = std::make_shared<TensorImpl>(rows, cols);
+
+    if (!grad_enabled) {
+        return Tensor::from_impl(impl);
+    }
 
     bool any_requires_grad = false;
 

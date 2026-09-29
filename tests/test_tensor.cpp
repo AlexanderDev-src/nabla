@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <random>
 #include <stdexcept>
+#include <type_traits>
 
 static int failures = 0;
 
@@ -302,6 +303,64 @@ int main() {
         CHECK_NEAR(x.grad_at(1, 1), 1.0f);
         CHECK_NEAR(x.grad_at(1, 2), 2.0f);
     }
+
+    // NoGradGuard: inside the guard no op records the graph, even when an
+    // input needs grad, so backward() refuses. Forward values are unchanged.
+    {
+        auto x = Tensor::from(3, 2, {1, 2, 3, 4, 5, 6});
+        auto w = Tensor::from(2, 2, {7, 8, 9, 10}).set_requires_grad(true);
+        nabla::NoGradGuard guard;
+        auto y = relu(add(matmul(x, w), x));
+        CHECK(!y.requires_grad());
+        CHECK(y.impl()->parents.empty());
+        CHECK_NEAR(y.at(0, 0), 26.0f);
+        CHECK_NEAR(y.at(2, 1), 106.0f);
+
+        bool threw = false;
+        try {
+            y.backward();
+        } catch (const std::logic_error &) {
+            threw = true;
+        }
+        CHECK(threw);
+    }
+
+    // NoGradGuard: once the guard leaves scope, graph building is back on
+    {
+        auto w = Tensor::from(2, 2, {7, 8, 9, 10}).set_requires_grad(true);
+        {
+            nabla::NoGradGuard guard;
+        }
+        CHECK(matmul(w, w).requires_grad());
+    }
+
+    // NoGradGuard: guards nest. When the inner guard ends, the outer one is
+    // still active, so graph building must stay off.
+    {
+        auto w = Tensor::from(2, 2, {7, 8, 9, 10}).set_requires_grad(true);
+        nabla::NoGradGuard outer;
+        {
+            nabla::NoGradGuard inner;
+        }
+        CHECK(!matmul(w, w).requires_grad());
+    }
+
+    // NoGradGuard: an exception thrown inside the guard still switches
+    // graph building back on, because leaving scope runs the destructor
+    {
+        auto w = Tensor::from(2, 2, {7, 8, 9, 10}).set_requires_grad(true);
+        try {
+            nabla::NoGradGuard guard;
+            throw std::runtime_error("inference failed");
+        } catch (const std::runtime_error &) {
+        }
+        CHECK(matmul(w, w).requires_grad());
+    }
+
+    // NoGradGuard: a copy would restore the flag a second time, so copying
+    // is not allowed
+    CHECK(!std::is_copy_constructible_v<nabla::NoGradGuard>);
+    CHECK(!std::is_copy_assignable_v<nabla::NoGradGuard>);
 
     // backward: a 10000-deep chain does not overflow the stack, and b,
     // which is added 10001 times, collects a grad of 1 from each use
