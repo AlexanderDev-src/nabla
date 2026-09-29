@@ -245,6 +245,64 @@ int main() {
         CHECK_NEAR(a.grad_at(2, 1), 68.0f);
     }
 
+    // relu forward: negatives and 0 become 0, positives pass through
+    {
+        auto x = Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4});
+        auto y = relu(x);
+        CHECK(y.rows() == 2);
+        CHECK(y.cols() == 3);
+        CHECK_NEAR(y.at(0, 0), 0.0f);
+        CHECK_NEAR(y.at(0, 1), 0.0f);
+        CHECK_NEAR(y.at(0, 2), 0.5f);
+        CHECK_NEAR(y.at(1, 0), 1.0f);
+        CHECK_NEAR(y.at(1, 1), 0.0f);
+        CHECK_NEAR(y.at(1, 2), 4.0f);
+    }
+
+    // relu backward: the grad is 1 where x > 0 and 0 elsewhere, including
+    // at x == 0 exactly (the same choice PyTorch makes)
+    {
+        auto x = Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4}).set_requires_grad(true);
+        auto y = relu(x);
+        y.backward();
+        CHECK_NEAR(x.grad_at(0, 0), 0.0f);
+        CHECK_NEAR(x.grad_at(0, 1), 0.0f);
+        CHECK_NEAR(x.grad_at(0, 2), 1.0f);
+        CHECK_NEAR(x.grad_at(1, 0), 1.0f);
+        CHECK_NEAR(x.grad_at(1, 1), 0.0f);
+        CHECK_NEAR(x.grad_at(1, 2), 1.0f);
+    }
+
+    // relu backward: followed by a matmul, so the upstream grad is [1, 2, 3]
+    // in every row rather than all ones. A rule that ignores g gives 1
+    // where this expects 3.
+    {
+        auto x = Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4}).set_requires_grad(true);
+        auto w = Tensor::from(3, 1, {1, 2, 3});
+        auto y = matmul(relu(x), w);
+        y.backward();
+        CHECK_NEAR(x.grad_at(0, 0), 0.0f);
+        CHECK_NEAR(x.grad_at(0, 2), 3.0f);
+        CHECK_NEAR(x.grad_at(1, 0), 1.0f);
+        CHECK_NEAR(x.grad_at(1, 1), 0.0f);
+        CHECK_NEAR(x.grad_at(1, 2), 3.0f);
+    }
+
+    // relu backward: add(relu(x), x) reaches x twice. The add rule puts 1
+    // into x first, so a relu rule that writes with = instead of += wipes
+    // that 1 out.
+    {
+        auto x = Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4}).set_requires_grad(true);
+        auto y = add(relu(x), x);
+        y.backward();
+        CHECK_NEAR(x.grad_at(0, 0), 1.0f);
+        CHECK_NEAR(x.grad_at(0, 1), 1.0f);
+        CHECK_NEAR(x.grad_at(0, 2), 2.0f);
+        CHECK_NEAR(x.grad_at(1, 0), 2.0f);
+        CHECK_NEAR(x.grad_at(1, 1), 1.0f);
+        CHECK_NEAR(x.grad_at(1, 2), 2.0f);
+    }
+
     // backward: a 10000-deep chain does not overflow the stack, and b,
     // which is added 10001 times, collects a grad of 1 from each use
     {

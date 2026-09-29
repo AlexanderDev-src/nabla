@@ -93,4 +93,31 @@ inline Tensor add(const Tensor &a, const Tensor &b) {
     return out;
 }
 
+inline Tensor relu(const Tensor &x) {
+    auto out = make_node(x.rows(), x.cols(), {x});
+
+    for (std::size_t i = 0; i < x.rows(); ++i) {
+        for (std::size_t j = 0; j < x.cols(); ++j) {
+            float val = x.at(i, j);
+            out.at(i, j) = (val > 0.0f) ? val : 0.0f;
+        }
+    }
+
+    if (out.requires_grad()) {
+        auto xi = x.impl();
+        out.impl()->backward_fn = [xi](const std::vector<float> &g) {
+            // relu works element by element, so one flat index k is the
+            // same position in x's data, x's grad and g
+            if (!xi->requires_grad)
+                return;
+            for (std::size_t k = 0; k < xi->data.size(); ++k) {
+                if (xi->data[k] > 0.0f) {
+                    xi->grad[k] += g[k];
+                }
+            }
+        };
+    }
+    return out;
+}
+
 } // namespace nabla
