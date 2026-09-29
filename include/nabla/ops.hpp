@@ -29,6 +29,31 @@ inline Tensor matmul(const Tensor &a, const Tensor &b) {
             out.at(i, j) = sum;
         }
     }
+
+    if (out.requires_grad()) {
+        auto ai = a.impl();
+        auto bimpl = b.impl();
+        out.impl()->backward_fn = [ai, bimpl](const std::vector<float> &g) {
+            // A = m * k , B = k * n, g = m * n -> matrix
+            const std::size_t m = ai->rows, k = ai->cols, n = bimpl->cols;
+            for (std::size_t i = 0; i < m; ++i) {
+                for (std::size_t j = 0; j < n; ++j) {
+                    const float g_ij = g[i * n + j];
+                    for (std::size_t p = 0; p < k; ++p) {
+                        if (ai->requires_grad) {
+                            ai->grad[i * k + p] +=
+                                g_ij * bimpl->data[p * n + j];
+                        }
+                        if (bimpl->requires_grad) {
+                            bimpl->grad[p * n + j] +=
+                                ai->data[i * k + p] * g_ij;
+                        }
+                    }
+                }
+            }
+        };
+    }
+
     return out;
 }
 

@@ -200,6 +200,51 @@ int main() {
         CHECK_NEAR(x.grad_at(1, 1), 2.0f);
     }
 
+    // matmul backward: [3x2] @ [2x3], non-square so rows and cols differ.
+    // With a seed of ones, A's grad is B's row sums in every row, and
+    // B's grad is A's column sums in every column.
+    {
+        auto a = Tensor::from(3, 2, {1, 2, 3, 4, 5, 6}).set_requires_grad(true);
+        auto b = Tensor::from(2, 3, {7, 8, 9, 10, 11, 12}).set_requires_grad(true);
+        auto c = matmul(a, b);
+        c.backward();
+        CHECK_NEAR(a.grad_at(0, 0), 24.0f);
+        CHECK_NEAR(a.grad_at(0, 1), 33.0f);
+        CHECK_NEAR(a.grad_at(2, 0), 24.0f);
+        CHECK_NEAR(a.grad_at(2, 1), 33.0f);
+        CHECK_NEAR(b.grad_at(0, 0), 9.0f);
+        CHECK_NEAR(b.grad_at(0, 2), 9.0f);
+        CHECK_NEAR(b.grad_at(1, 0), 12.0f);
+        CHECK_NEAR(b.grad_at(1, 2), 12.0f);
+    }
+
+    // matmul backward: an input that does not need grad is left untouched
+    {
+        auto x = Tensor::from(3, 2, {1, 2, 3, 4, 5, 6});
+        auto w = Tensor::from(2, 3, {7, 8, 9, 10, 11, 12}).set_requires_grad(true);
+        auto y = matmul(x, w);
+        y.backward();
+        CHECK_NEAR(x.grad_at(0, 0), 0.0f);
+        CHECK_NEAR(x.grad_at(2, 1), 0.0f);
+        CHECK_NEAR(w.grad_at(0, 2), 9.0f);
+        CHECK_NEAR(w.grad_at(1, 0), 12.0f);
+    }
+
+    // matmul backward: two matmuls in a row, so the upstream grad reaching
+    // the first one is not all ones. A rule that forgets to multiply by g
+    // gives [24, 33] here instead of [50, 68].
+    {
+        auto a = Tensor::from(3, 2, {1, 2, 3, 4, 5, 6}).set_requires_grad(true);
+        auto b = Tensor::from(2, 3, {7, 8, 9, 10, 11, 12});
+        auto e = Tensor::from(3, 1, {1, 2, 3});
+        auto d = matmul(matmul(a, b), e);
+        d.backward();
+        CHECK_NEAR(a.grad_at(0, 0), 50.0f);
+        CHECK_NEAR(a.grad_at(0, 1), 68.0f);
+        CHECK_NEAR(a.grad_at(2, 0), 50.0f);
+        CHECK_NEAR(a.grad_at(2, 1), 68.0f);
+    }
+
     // backward: a 10000-deep chain does not overflow the stack, and b,
     // which is added 10001 times, collects a grad of 1 from each use
     {
