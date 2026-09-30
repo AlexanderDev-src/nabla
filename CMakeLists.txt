@@ -21,8 +21,15 @@ add_executable(nabla ${SOURCE_FILES})
 target_include_directories(nabla PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_compile_options(nabla PRIVATE -Wall -Wextra -Wpedantic)
 
-# 5. Test executable (separate target, shares the same headers)
-file(GLOB_RECURSE TEST_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/tests/*.cpp")
+# 5. Test executable (separate target, shares the same headers). Only the
+#    files directly in tests/ go in: tests/selftest/ has its own main().
+file(GLOB TEST_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/tests/*.cpp")
 add_executable(nabla_tests ${TEST_FILES})
-target_include_directories(nabla_tests PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(nabla_tests PUBLIC ${CMAKE_SOURCE_DIR}/include
+                                              ${CMAKE_SOURCE_DIR}/tests)
 target_compile_options(nabla_tests PRIVATE -Wall -Wextra -Wpedantic)
+
+# 6. Self-test for the harness in tests/harness.hpp
+add_executable(harness_selftest ${CMAKE_SOURCE_DIR}/tests/selftest/harness_selftest.cpp)
+target_include_directories(harness_selftest PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_compile_options(harness_selftest PRIVATE -Wall -Wextra -Wpedantic)
