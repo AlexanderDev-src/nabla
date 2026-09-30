@@ -1,4 +1,5 @@
 #include "nabla/nabla.hpp"
+#include "nabla/ops.hpp"
 #include <cmath>
 #include <cstdio>
 #include <random>
@@ -16,6 +17,17 @@ static int failures = 0;
     } while (0)
 
 #define CHECK_NEAR(a, b) CHECK(std::fabs((a) - (b)) < 1e-5f)
+
+// Two-layer network, built only from ops that already exist:
+//   h = relu(x @ w1 + b1)
+//   y = h @ w2 + b2
+static nabla::Tensor two_layer(const nabla::Tensor &x, const nabla::Tensor &w1,
+                               const nabla::Tensor &b1, const nabla::Tensor &w2,
+                               const nabla::Tensor &b2) {
+    auto h = nabla::relu(nabla::add(nabla::matmul(x, w1), b1));
+    auto y = nabla::add(nabla::matmul(h, w2), b2);
+    return y;
+}
 
 int main() {
     using nabla::Tensor;
@@ -206,7 +218,8 @@ int main() {
     // B's grad is A's column sums in every column.
     {
         auto a = Tensor::from(3, 2, {1, 2, 3, 4, 5, 6}).set_requires_grad(true);
-        auto b = Tensor::from(2, 3, {7, 8, 9, 10, 11, 12}).set_requires_grad(true);
+        auto b =
+            Tensor::from(2, 3, {7, 8, 9, 10, 11, 12}).set_requires_grad(true);
         auto c = matmul(a, b);
         c.backward();
         CHECK_NEAR(a.grad_at(0, 0), 24.0f);
@@ -222,7 +235,8 @@ int main() {
     // matmul backward: an input that does not need grad is left untouched
     {
         auto x = Tensor::from(3, 2, {1, 2, 3, 4, 5, 6});
-        auto w = Tensor::from(2, 3, {7, 8, 9, 10, 11, 12}).set_requires_grad(true);
+        auto w =
+            Tensor::from(2, 3, {7, 8, 9, 10, 11, 12}).set_requires_grad(true);
         auto y = matmul(x, w);
         y.backward();
         CHECK_NEAR(x.grad_at(0, 0), 0.0f);
@@ -263,7 +277,8 @@ int main() {
     // relu backward: the grad is 1 where x > 0 and 0 elsewhere, including
     // at x == 0 exactly (the same choice PyTorch makes)
     {
-        auto x = Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4}).set_requires_grad(true);
+        auto x =
+            Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4}).set_requires_grad(true);
         auto y = relu(x);
         y.backward();
         CHECK_NEAR(x.grad_at(0, 0), 0.0f);
@@ -278,7 +293,8 @@ int main() {
     // in every row rather than all ones. A rule that ignores g gives 1
     // where this expects 3.
     {
-        auto x = Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4}).set_requires_grad(true);
+        auto x =
+            Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4}).set_requires_grad(true);
         auto w = Tensor::from(3, 1, {1, 2, 3});
         auto y = matmul(relu(x), w);
         y.backward();
@@ -293,7 +309,8 @@ int main() {
     // into x first, so a relu rule that writes with = instead of += wipes
     // that 1 out.
     {
-        auto x = Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4}).set_requires_grad(true);
+        auto x =
+            Tensor::from(2, 3, {-2, 0, 0.5f, 1, -3, 4}).set_requires_grad(true);
         auto y = add(relu(x), x);
         y.backward();
         CHECK_NEAR(x.grad_at(0, 0), 1.0f);
@@ -361,6 +378,61 @@ int main() {
     // is not allowed
     CHECK(!std::is_copy_constructible_v<nabla::NoGradGuard>);
     CHECK(!std::is_copy_assignable_v<nabla::NoGradGuard>);
+
+    // two-layer network: [2x3] -> 4 hidden units -> 2 outputs. The hidden
+    // pre-activation is [[0.5, -0.5, -2.5, 7], [2.5, 1, 1, -2]], so relu
+    // closes some units in each row, and those gates show up as zeros in
+    // w1's grad. Expected grads were checked by finite difference.
+    {
+        auto x = Tensor::from(2, 3, {1, 2, -1, 0, 1, 2});
+        auto w1 =
+            Tensor::from(3, 4, {1, -1, 0.5f, 2, 0, 1, -1, 1, 1, 0.5f, 1, -2})
+                .set_requires_grad(true);
+        auto b1 = Tensor::from(1, 4, {0.5f, -1, 0, 1}).set_requires_grad(true);
+        auto w2 = Tensor::from(4, 2, {1, 2, 2, -0.5f, -1, 3, 0.5f, -2})
+                      .set_requires_grad(true);
+        auto b2 = Tensor::from(1, 2, {1, -1}).set_requires_grad(true);
+
+        auto y = two_layer(x, w1, b1, w2, b2);
+        const bool shape_ok = y.rows() == 2 && y.cols() == 2;
+        CHECK(shape_ok);
+        CHECK(y.requires_grad());
+
+        // only run backward once forward is in shape, so a wrong forward
+        // shows up as FAIL lines instead of an uncaught exception
+        if (shape_ok && y.requires_grad()) {
+            CHECK_NEAR(y.at(0, 0), 5.0f);
+            CHECK_NEAR(y.at(0, 1), -14.0f);
+            CHECK_NEAR(y.at(1, 0), 4.5f);
+            CHECK_NEAR(y.at(1, 1), 6.5f);
+
+            y.backward();
+
+            CHECK_NEAR(b2.grad_at(0, 0), 2.0f);
+            CHECK_NEAR(b2.grad_at(0, 1), 2.0f);
+
+            CHECK_NEAR(w2.grad_at(0, 0), 3.0f);
+            CHECK_NEAR(w2.grad_at(1, 1), 1.0f);
+            CHECK_NEAR(w2.grad_at(2, 0), 1.0f);
+            CHECK_NEAR(w2.grad_at(3, 1), 7.0f);
+
+            CHECK_NEAR(b1.grad_at(0, 0), 6.0f);
+            CHECK_NEAR(b1.grad_at(0, 1), 1.5f);
+            CHECK_NEAR(b1.grad_at(0, 2), 2.0f);
+            CHECK_NEAR(b1.grad_at(0, 3), -1.5f);
+
+            CHECK_NEAR(w1.grad_at(0, 0), 3.0f);
+            CHECK_NEAR(w1.grad_at(0, 1), 0.0f);
+            CHECK_NEAR(w1.grad_at(0, 2), 0.0f);
+            CHECK_NEAR(w1.grad_at(1, 0), 9.0f);
+            CHECK_NEAR(w1.grad_at(1, 3), -3.0f);
+            CHECK_NEAR(w1.grad_at(2, 1), 3.0f);
+            CHECK_NEAR(w1.grad_at(2, 2), 4.0f);
+            CHECK_NEAR(w1.grad_at(2, 3), 1.5f);
+
+            CHECK_NEAR(x.grad_at(0, 0), 0.0f);
+        }
+    }
 
     // backward: a 10000-deep chain does not overflow the stack, and b,
     // which is added 10001 times, collects a grad of 1 from each use
