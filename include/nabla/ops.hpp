@@ -120,23 +120,30 @@ inline Tensor relu(const Tensor &x) {
     return out;
 }
 
-// Element-wise product. Both inputs must have exactly the same shape; there
-// is no broadcasting here.
 inline Tensor mul(const Tensor &a, const Tensor &b) {
-    // TODO: (1) throw std::invalid_argument when the shapes differ, with a
-    //           message built from shape_str like matmul and add do
-
+    if (a.rows() != b.rows() || a.cols() != b.cols()) {
+        throw std::invalid_argument("Shape don't match between " +
+                                    shape_str(a) + " and " + shape_str(b));
+    }
     auto out = make_node(a.rows(), a.cols(), {a, b});
 
-    // TODO: (2) forward: out at (i, j) is a at (i, j) times b at (i, j)
+    for (size_t i = 0; i < a.rows(); ++i) {
+        for (size_t j = 0; j < a.cols(); ++j) {
+            out.at(i, j) = a.at(i, j) * b.at(i, j);
+        }
+    }
 
     if (out.requires_grad()) {
         auto ai = a.impl();
         auto bimpl = b.impl();
         out.impl()->backward_fn = [ai, bimpl](const std::vector<float> &g) {
             for (std::size_t k = 0; k < g.size(); ++k) {
-                // TODO: (3) for each input that needs grad, accumulate
-                //           g at k times the OTHER input's data at k
+                if (ai->requires_grad) {
+                    ai->grad[k] += g[k] * bimpl->data[k];
+                }
+                if (bimpl->requires_grad) {
+                    bimpl->grad[k] += g[k] * ai->data[k];
+                }
             }
         };
     }

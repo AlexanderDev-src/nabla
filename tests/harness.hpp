@@ -1,6 +1,4 @@
 #pragma once
-// A small test harness: TEST(name) { ... } registers itself, run_all()
-// runs every registered test and reports which ones failed.
 #include <cmath>
 #include <cstdio>
 #include <exception>
@@ -42,7 +40,8 @@ inline int run_all() {
         try {
             t.fn();
         } catch (const std::exception &e) {
-            e.what();
+            std::cout << "  threw: " << e.what() << "\n";
+            has_thrown = true;
 
         } catch (...) {
             has_thrown = true;
