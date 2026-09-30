@@ -437,3 +437,80 @@ TEST(backward_deep_chain) {
     CHECK_NEAR(y.grad_at(0, 0), 1.0f);
     CHECK_NEAR(b.grad_at(0, 0), 10001.0f);
 }
+
+// mul forward: element by element, no summing
+TEST(mul_forward) {
+    auto a = Tensor::from(2, 3, {1, -2, 3, 0.5f, 4, -1});
+    auto b = Tensor::from(2, 3, {2, 3, -1, 4, 0.5f, -2});
+    auto c = mul(a, b);
+    CHECK(c.rows() == 2);
+    CHECK(c.cols() == 3);
+    CHECK_NEAR(c.at(0, 0), 2.0f);
+    CHECK_NEAR(c.at(0, 1), -6.0f);
+    CHECK_NEAR(c.at(0, 2), -3.0f);
+    CHECK_NEAR(c.at(1, 0), 2.0f);
+    CHECK_NEAR(c.at(1, 1), 2.0f);
+    CHECK_NEAR(c.at(1, 2), 2.0f);
+}
+
+// mul: [2x3] and [3x2] hold the same number of values but are different
+// shapes, so a check that only compares sizes lets this through
+TEST(mul_rejects_mismatched_shapes) {
+    auto a = Tensor::from(2, 3, {1, 2, 3, 4, 5, 6});
+    auto b = Tensor::from(3, 2, {1, 2, 3, 4, 5, 6});
+    bool threw = false;
+    try {
+        mul(a, b);
+    } catch (const std::invalid_argument &) {
+        threw = true;
+    }
+    CHECK(threw);
+}
+
+// mul backward: with a seed of ones, a's grad is b and b's grad is a.
+// A rule that uses its own input instead of the other one fails here.
+TEST(mul_backward_swaps_inputs) {
+    auto a = Tensor::from(2, 3, {1, -2, 3, 0.5f, 4, -1}).set_requires_grad(true);
+    auto b = Tensor::from(2, 3, {2, 3, -1, 4, 0.5f, -2}).set_requires_grad(true);
+    auto c = mul(a, b);
+    c.backward();
+    CHECK_NEAR(a.grad_at(0, 0), 2.0f);
+    CHECK_NEAR(a.grad_at(0, 2), -1.0f);
+    CHECK_NEAR(a.grad_at(1, 1), 0.5f);
+    CHECK_NEAR(b.grad_at(0, 0), 1.0f);
+    CHECK_NEAR(b.grad_at(0, 2), 3.0f);
+    CHECK_NEAR(b.grad_at(1, 1), 4.0f);
+}
+
+// mul backward: mul(x, x) reaches x through both inputs, so the grad is
+// 2x. Writing with = instead of += gives x.
+TEST(mul_backward_reused_input) {
+    auto x = Tensor::from(2, 3, {1, -2, 3, 0.5f, 4, -1}).set_requires_grad(true);
+    auto y = mul(x, x);
+    y.backward();
+    CHECK_NEAR(x.grad_at(0, 0), 2.0f);
+    CHECK_NEAR(x.grad_at(0, 1), -4.0f);
+    CHECK_NEAR(x.grad_at(0, 2), 6.0f);
+    CHECK_NEAR(x.grad_at(1, 0), 1.0f);
+    CHECK_NEAR(x.grad_at(1, 1), 8.0f);
+    CHECK_NEAR(x.grad_at(1, 2), -2.0f);
+}
+
+// mul backward: followed by a matmul, so the upstream grad is [1, 2, 3] in
+// every row. A rule that ignores g gives a's grad = b here. b does not
+// need grad, so its grad stays 0.
+TEST(mul_backward_upstream) {
+    auto a = Tensor::from(2, 3, {1, -2, 3, 0.5f, 4, -1}).set_requires_grad(true);
+    auto b = Tensor::from(2, 3, {2, 3, -1, 4, 0.5f, -2});
+    auto w = Tensor::from(3, 1, {1, 2, 3});
+    auto y = matmul(mul(a, b), w);
+    y.backward();
+    CHECK_NEAR(a.grad_at(0, 0), 2.0f);
+    CHECK_NEAR(a.grad_at(0, 1), 6.0f);
+    CHECK_NEAR(a.grad_at(0, 2), -3.0f);
+    CHECK_NEAR(a.grad_at(1, 0), 4.0f);
+    CHECK_NEAR(a.grad_at(1, 1), 1.0f);
+    CHECK_NEAR(a.grad_at(1, 2), -6.0f);
+    CHECK_NEAR(b.grad_at(0, 0), 0.0f);
+    CHECK_NEAR(b.grad_at(1, 2), 0.0f);
+}
