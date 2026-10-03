@@ -514,3 +514,82 @@ TEST(mul_backward_upstream) {
     CHECK_NEAR(b.grad_at(0, 0), 0.0f);
     CHECK_NEAR(b.grad_at(1, 2), 0.0f);
 }
+
+// sum forward: every element added into one [1x1] value
+TEST(sum_forward) {
+    auto x = Tensor::from(2, 3, {1, -2, 3, 0.5f, 4, -1});
+    auto s = sum(x);
+    CHECK(s.rows() == 1);
+    CHECK(s.cols() == 1);
+    CHECK_NEAR(s.at(0, 0), 5.5f);
+}
+
+// sum backward: with a seed of 1, every element of x gets grad 1
+TEST(sum_backward_ones) {
+    auto x = Tensor::from(2, 3, {1, -2, 3, 0.5f, 4, -1}).set_requires_grad(true);
+    auto s = sum(x);
+    s.backward();
+    CHECK_NEAR(x.grad_at(0, 0), 1.0f);
+    CHECK_NEAR(x.grad_at(0, 2), 1.0f);
+    CHECK_NEAR(x.grad_at(1, 1), 1.0f);
+    CHECK_NEAR(x.grad_at(1, 2), 1.0f);
+}
+
+// sum backward: sum(x) times 3, so the upstream grad reaching sum is 3.
+// A rule that adds 1 instead of g gives 1 here.
+TEST(sum_backward_upstream) {
+    auto x = Tensor::from(2, 3, {1, -2, 3, 0.5f, 4, -1}).set_requires_grad(true);
+    auto c = Tensor::from(1, 1, {3});
+    auto y = mul(sum(x), c);
+    y.backward();
+    CHECK_NEAR(x.grad_at(0, 0), 3.0f);
+    CHECK_NEAR(x.grad_at(1, 2), 3.0f);
+}
+
+// tanh forward: values checked against Python's math.tanh
+TEST(tanh_forward) {
+    auto x = Tensor::from(2, 2, {-1, 0, 0.5f, 2});
+    auto y = tanh(x);
+    CHECK(y.rows() == 2);
+    CHECK(y.cols() == 2);
+    CHECK_NEAR(y.at(0, 0), -0.7615942f);
+    CHECK_NEAR(y.at(0, 1), 0.0f);
+    CHECK_NEAR(y.at(1, 0), 0.4621172f);
+    CHECK_NEAR(y.at(1, 1), 0.9640276f);
+}
+
+// tanh backward: with a seed of 1 the grad is 1 - tanh(x)^2
+TEST(tanh_backward) {
+    auto x = Tensor::from(2, 2, {-1, 0, 0.5f, 2}).set_requires_grad(true);
+    auto y = tanh(x);
+    y.backward();
+    CHECK_NEAR(x.grad_at(0, 0), 0.4199743f);
+    CHECK_NEAR(x.grad_at(0, 1), 1.0f);
+    CHECK_NEAR(x.grad_at(1, 0), 0.7864477f);
+    CHECK_NEAR(x.grad_at(1, 1), 0.0706508f);
+}
+
+// tanh backward: tanh(x) times [1, 2, 3, 4], so the upstream grad is not
+// all ones. A rule that ignores g gives the tanh_backward values here.
+TEST(tanh_backward_upstream) {
+    auto x = Tensor::from(2, 2, {-1, 0, 0.5f, 2}).set_requires_grad(true);
+    auto c = Tensor::from(2, 2, {1, 2, 3, 4});
+    auto y = mul(tanh(x), c);
+    y.backward();
+    CHECK_NEAR(x.grad_at(0, 0), 0.4199743f);
+    CHECK_NEAR(x.grad_at(0, 1), 2.0f);
+    CHECK_NEAR(x.grad_at(1, 0), 2.3593432f);
+    CHECK_NEAR(x.grad_at(1, 1), 0.2826033f);
+}
+
+// tanh backward: add(tanh(x), x) reaches x twice. The add rule puts 1 into
+// x first, so a tanh rule that writes with = instead of += wipes it out.
+TEST(tanh_backward_reused_input) {
+    auto x = Tensor::from(2, 2, {-1, 0, 0.5f, 2}).set_requires_grad(true);
+    auto y = add(tanh(x), x);
+    y.backward();
+    CHECK_NEAR(x.grad_at(0, 0), 1.4199743f);
+    CHECK_NEAR(x.grad_at(0, 1), 2.0f);
+    CHECK_NEAR(x.grad_at(1, 0), 1.7864477f);
+    CHECK_NEAR(x.grad_at(1, 1), 1.0706508f);
+}

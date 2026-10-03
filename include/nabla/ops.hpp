@@ -1,6 +1,7 @@
 #pragma once
 #include "nabla/autograd.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -106,8 +107,6 @@ inline Tensor relu(const Tensor &x) {
     if (out.requires_grad()) {
         auto xi = x.impl();
         out.impl()->backward_fn = [xi](const std::vector<float> &g) {
-            // relu works element by element, so one flat index k is the
-            // same position in x's data, x's grad and g
             if (!xi->requires_grad)
                 return;
             for (std::size_t k = 0; k < xi->data.size(); ++k) {
@@ -144,6 +143,53 @@ inline Tensor mul(const Tensor &a, const Tensor &b) {
                 if (bimpl->requires_grad) {
                     bimpl->grad[k] += g[k] * ai->data[k];
                 }
+            }
+        };
+    }
+    return out;
+}
+
+inline Tensor sum(const Tensor &x) {
+    auto out = make_node(1, 1, {x});
+
+    float total = 0.0f;
+    for (std::size_t i = 0; i < x.rows(); ++i) {
+        for (std::size_t j = 0; j < x.cols(); ++j) {
+            total += x.at(i, j);
+        }
+    }
+    out.at(0, 0) = total;
+
+    if (out.requires_grad()) {
+        auto xi = x.impl();
+        out.impl()->backward_fn = [xi](const std::vector<float> &g) {
+            if (!xi->requires_grad)
+                return;
+            for (float &grad_val : xi->grad) {
+                grad_val += g[0];
+            }
+        };
+    }
+    return out;
+}
+
+inline Tensor tanh(const Tensor &x) {
+    auto out = make_node(x.rows(), x.cols(), {x});
+
+    for (std::size_t i = 0; i < x.rows(); ++i) {
+        for (std::size_t j = 0; j < x.cols(); ++j) {
+            out.at(i, j) += std::tanh(x.at(i, j));
+        }
+    }
+
+    if (out.requires_grad()) {
+        auto xi = x.impl();
+        out.impl()->backward_fn = [xi](const std::vector<float> &g) {
+            if (!xi->requires_grad)
+                return;
+            for (std::size_t k = 0; k < g.size(); ++k) {
+                float t = std::tanh(xi->data[k]);
+                xi->grad[k] += g[k] * (1.0f - t * t);
             }
         };
     }
