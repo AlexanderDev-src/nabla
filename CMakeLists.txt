@@ -33,3 +33,8 @@ target_compile_options(nabla_tests PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(harness_selftest ${CMAKE_SOURCE_DIR}/tests/selftest/harness_selftest.cpp)
 target_include_directories(harness_selftest PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 target_compile_options(harness_selftest PRIVATE -Wall -Wextra -Wpedantic)
+
+# 7. Examples: one executable per file, run with cbuild -T <name> run
+add_executable(xor ${CMAKE_SOURCE_DIR}/examples/xor.cpp)
+target_include_directories(xor PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_compile_options(xor PRIVATE -Wall -Wextra -Wpedantic)

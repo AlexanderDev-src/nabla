@@ -196,4 +196,32 @@ inline Tensor tanh(const Tensor &x) {
     return out;
 }
 
+// Squashes every element into (0, 1).
+inline Tensor sigmoid(const Tensor &x) {
+    auto out = make_node(x.rows(), x.cols(), {x});
+
+    // forward: out at (i, j) is 1 / (1 + std::exp(-x at (i, j)))
+    for (std::size_t i = 0; i < x.rows(); ++i) {
+        for (std::size_t j = 0; j < x.cols(); ++j) {
+            out.at(i, j) = 1.0f / (1.0f + std::exp(-x.at(i, j)));
+        }
+    }
+
+    if (out.requires_grad()) {
+        auto xi = x.impl();
+        out.impl()->backward_fn = [xi](const std::vector<float> &g) {
+            if (!xi->requires_grad)
+                return;
+            for (std::size_t k = 0; k < g.size(); ++k) {
+                // s = sigmoid of xi->data[k], computed again
+                //            the way tanh does it, then grad at k += g at k
+                //            times s * (1 - s)
+                float s = 1.0f / (1.0f + std::exp(-xi->data[k]));
+                xi->grad[k] += g[k] * (s * (1.0f - s));
+            }
+        };
+    }
+    return out;
+}
+
 } // namespace nabla
