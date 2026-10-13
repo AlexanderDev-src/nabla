@@ -1,6 +1,4 @@
 #pragma once
-// Fused losses: forward and backward written as one op instead of built
-// from smaller ops, so the backward rule is short and stays exact.
 #include "nabla/ops.hpp"
 #include <algorithm>
 #include <cmath>
@@ -10,47 +8,71 @@
 
 namespace nabla {
 
-// Mean of (pred - target)^2 over every element
 inline Tensor mse_loss(const Tensor &pred, const Tensor &target) {
-    // TODO: (M4.6a) throw std::invalid_argument when the shapes differ
+    if (pred.rows() != target.rows() || pred.cols() != target.cols()) {
+        throw std::invalid_argument("mse_loss: shape mismatch " +
+                                    shape_str(pred) + " vs " +
+                                    shape_str(target));
+    }
 
-    // target is data, not a parent, so it never gets a grad
     auto out = make_node(1, 1, {pred});
 
-    // TODO: (M4.6b) forward: out at (0, 0) = sum of (p - t)^2 / N, where
-    //           N is the number of elements
+    float total = 0.0f;
+    for (std::size_t i = 0; i < pred.rows(); ++i) {
+        for (std::size_t j = 0; j < pred.cols(); j++) {
+            float d = pred.at(i, j) - target.at(i, j);
+            total += pow(d, 2);
+        }
+    }
+    out.at(0, 0) = total / (pred.rows() * pred.cols());
 
     if (out.requires_grad()) {
         auto pi = pred.impl();
         auto ti = target.impl();
         out.impl()->backward_fn = [pi, ti](const std::vector<float> &g) {
             for (std::size_t k = 0; k < pi->data.size(); ++k) {
-                // TODO: (M4.6c) pi->grad at k += g[0] * 2 (p - t) / N
+                float d = pi->data[k] - ti->data[k];
+                pi->grad[k] += g[0] * 2.0f * d / pi->data.size();
             }
         };
     }
     return out;
 }
 
-// Mean over the batch of -log(softmax(row i) at labels[i]).
-// logits is [B, C]; labels holds one class index per row.
 inline Tensor softmax_cross_entropy(const Tensor &logits,
                                     const std::vector<std::size_t> &labels) {
     const std::size_t B = logits.rows(), C = logits.cols();
-    // TODO: (M4.7a) throw std::invalid_argument when labels.size() != B,
-    //           and std::out_of_range when any label >= C
+    if (B != labels.size()) {
+        throw std::invalid_argument(
+            "softmax_cross_entropy: got " + std::to_string(labels.size()) +
+            " labels for " + std::to_string(B) + " rows");
+    }
+    for (std::size_t label : labels) {
+        if (label >= C) {
+            throw std::out_of_range("softmax_cross_entropy: label " +
+                                    std::to_string(label) + " with " +
+                                    std::to_string(C) + " classes");
+        }
+    }
 
     auto out = make_node(1, 1, {logits});
 
     std::vector<float> probs(B * C); // softmax of every row, for backward
     float total = 0.0f;
     for (std::size_t i = 0; i < B; ++i) {
-        // TODO: (M4.7b) m = largest logit in row i
-        // TODO: (M4.7c) probs at (i, j) = exp(z - m); add them up in s
-        // TODO: (M4.7d) divide row i of probs by s
-        // TODO: (M4.7e) total += loss of row i, which is -log(probs at
-        //           label). Rewrite it with log(s) and m so it stays
-        //           finite at logit 1000.
+        float m = logits.at(i, 0);
+        for (std::size_t j = 1; j < C; ++j) {
+            m = std::max(m, logits.at(i, j));
+        }
+        float s = 0.0f;
+        for (std::size_t j = 0; j < C; ++j) {
+            probs[i * C + j] = exp(logits.at(i, j) - m);
+            s += probs[i * C + j];
+        }
+        for (std::size_t j = 0; j < C; ++j) {
+            probs[i * C + j] /= s;
+        }
+        total += std::log(s) + m - logits.at(i, labels[i]);
     }
     out.at(0, 0) = total / static_cast<float>(B);
 
@@ -58,9 +80,13 @@ inline Tensor softmax_cross_entropy(const Tensor &logits,
         auto li = logits.impl();
         out.impl()->backward_fn = [li, probs, labels, B,
                                    C](const std::vector<float> &g) {
-            // TODO: (M4.7f) li->grad at (i, j) += g[0] * dL/dz at (i, j).
-            //           Derive dL/dz on paper first; ce_grad has the
-            //           numbers to check against.
+            for (std::size_t i = 0; i < B; ++i) {
+                for (std::size_t j = 0; j < C; ++j) {
+                    float y = (j == labels[i]) ? 1.0f : 0.0f;
+                    li->grad[i * C + j] +=
+                        g[0] * (probs[i * C + j] - y) / static_cast<float>(B);
+                }
+            }
         };
     }
     return out;

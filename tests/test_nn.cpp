@@ -267,6 +267,14 @@ TEST(mse_value) {
     CHECK_NEAR(loss.at(0, 0), 3.5f);
 }
 
+// [2x3] on purpose: rows and cols differ, so a loop that stops at the wrong
+// one misses a column. Squares 1, 0, 4, 9, 0, 16, mean 30 / 6.
+TEST(mse_value_non_square) {
+    auto p = Tensor::from(2, 3, {1, 2, 3, 4, 5, 6});
+    auto t = Tensor::from(2, 3, {0, 2, 5, 1, 5, 2});
+    CHECK_NEAR(mse_loss(p, t).at(0, 0), 5.0f);
+}
+
 // grad is 2 (p - t) / N with N = 4
 TEST(mse_grad) {
     auto p = Tensor::from(2, 2, {1, 2, 3, 4}).set_requires_grad(true);

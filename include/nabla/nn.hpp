@@ -1,5 +1,4 @@
 #pragma once
-// Layers. A Module turns a Tensor into a Tensor and owns its own weights.
 #include "nabla/ops.hpp"
 #include <cmath>
 #include <cstddef>
@@ -10,8 +9,6 @@
 
 namespace nabla {
 
-// virtual: a call through a Module& runs the subclass's version.
-// = 0: no body here, so every subclass must write its own.
 class Module {
   public:
     virtual ~Module() = default;
@@ -32,7 +29,6 @@ class Module {
     bool training_ = true;
 };
 
-// y = x @ weight + bias, with x [batch, in] and y [batch, out]
 class Linear : public Module {
   public:
     Linear(std::size_t in, std::size_t out, std::mt19937 &rng)
@@ -42,7 +38,6 @@ class Linear : public Module {
         bias.set_requires_grad(true);
     }
 
-    // override: the compiler checks that Module really has this function.
     Tensor forward(const Tensor &x) override {
         return add(matmul(x, weight), bias);
     }
@@ -68,29 +63,34 @@ class Sigmoid : public Module {
     Tensor forward(const Tensor &x) override { return sigmoid(x); }
 };
 
-// Runs its layers in order: the output of one is the input of the next.
 class Sequential : public Module {
   public:
-    // Lets you write Sequential model{layer1, layer2, ...}
     Sequential(std::initializer_list<std::shared_ptr<Module>> layers)
         : layers_(layers) {}
 
     Tensor forward(const Tensor &x) override {
         Tensor h = x;
-        // TODO: (M4.5a) for each layer in layers_: h = layer->forward(h)
+        for (const auto &layer : layers_) {
+            h = layer->forward(h);
+        }
         return h;
     }
 
     std::vector<Tensor> parameters() override {
         std::vector<Tensor> all;
-        // TODO: (M4.5b) for each layer, push_back every tensor of
-        //           layer->parameters() into all
+        for (const auto &layer : layers_) {
+            for (const auto &p : layer->parameters()) {
+                all.push_back(p);
+            }
+        }
         return all;
     }
 
     void set_training(bool on) override {
-        // TODO: (M4.5c) Module::set_training(on) for the model itself,
-        //           then layer->set_training(on) for each layer
+        Module::set_training(on);
+        for (const auto &layer : layers_) {
+            layer->set_training(on);
+        }
     }
 
   private:
