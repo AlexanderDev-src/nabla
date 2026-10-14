@@ -15,34 +15,61 @@
 `nabla` builds a computation graph as your code runs, then differentiates it
 automatically. You write the forward pass; the backward pass comes for free.
 
+This is [`examples/xor.cpp`](examples/xor.cpp), as it stands today:
+
 ```cpp
 #include "nabla/nabla.hpp"
+#include <cstdio>
+#include <memory>
+#include <random>
+
+using namespace nabla;
 
 int main() {
-    std::mt19937 rng(42);
+    std::mt19937 rng(0);
+    Sequential model{
+        std::make_shared<Linear>(2, 8, rng), std::make_shared<Tanh>(),
+        std::make_shared<Linear>(8, 1, rng), std::make_shared<Sigmoid>()};
+    const Tensor x = Tensor::from(4, 2, {0, 0, 0, 1, 1, 0, 1, 1});
+    const Tensor y = Tensor::from(4, 1, {0, 1, 1, 0});
+    const float lr = 0.5f;
 
-    auto model = nabla::nn::Sequential{
-        nabla::nn::make<nabla::nn::Linear>(2, 8, rng),
-        nabla::nn::make<nabla::nn::Tanh>(),
-        nabla::nn::make<nabla::nn::Linear>(8, 1, rng),
-    };
-
-    auto x = nabla::Tensor::from(4, 2, {0, 0, 0, 1, 1, 0, 1, 1});
-    auto y = nabla::Tensor::from(4, 1, {0, 1, 1, 0});   // XOR
-
-    nabla::optim::Adam opt(model.parameters(), {.lr = 0.05f});
-
-    for (int step = 0; step < 500; ++step) {
-        opt.zero_grad();
-        auto loss = nabla::mse_loss(model(x), y);
+    for (int step = 0; step <= 2000; ++step) {
+        Tensor loss = mse_loss(model.forward(x), y);
         loss.backward();
-        opt.step();
+        for (auto &p : model.parameters()) {
+            auto &data = p.impl()->data;
+            auto &grad = p.impl()->grad;
+            for (std::size_t k = 0; k < data.size(); ++k) {
+                data[k] -= lr * grad[k];
+                grad[k] = 0;
+            }
+        }
+        if (step % 250 == 0) {
+            std::printf("step %4d  loss %.6f\n", step, loss.at(0, 0));
+        }
+    }
+    Tensor out = model.forward(x);
+    for (std::size_t i = 0; i < 4; ++i) {
+        std::printf("%g xor %g = %.4f\n", x.at(i, 0), x.at(i, 1), out.at(i, 0));
     }
 }
 ```
 
-That's the whole training loop. No layer ever implements `backward()` — the graph
-knows how to reverse itself.
+```
+step    0  loss 0.357442
+step 2000  loss 0.000462
+0 xor 0 = 0.0128
+0 xor 1 = 0.9768
+1 xor 0 = 0.9769
+1 xor 1 = 0.0247
+```
+
+No layer ever implements `backward()` — the graph knows how to reverse itself.
+The parameter update is still written by hand, because there is no optimiser
+yet. Leaf gradients accumulate across `backward()` calls, so the loop zeroes
+each one after using it. Milestone M5 replaces those eight lines with
+`opt.step()` and `opt.zero_grad()`.
 
 > XOR is the smallest honest test of an autodiff engine: a single linear layer
 > provably cannot solve it, so if this converges, the hidden layer and its
@@ -68,26 +95,37 @@ knows how to reverse itself.
 
 A learning-grade automatic differentiation engine, written to understand how
 PyTorch's `autograd` actually works — and then made fast enough and complete
-enough to train a real model on a real dataset.
+enough to train a real model on a real dataset. It is built in numbered
+milestones; M0 to M4 are done.
 
-**What it has**
+**What it has today**
 
 - Reverse-mode automatic differentiation over a dynamically built graph
-- `matmul`, broadcasting `add`, `relu`, `tanh`, `sigmoid`, `dropout`, reductions
-- Fused, numerically stable `softmax_cross_entropy`
-- `Linear`, `Sequential`, `Dropout`, He initialisation
-- SGD with momentum and Nesterov, Adam and AdamW
-- Gradient clipping, cosine LR schedule with warmup
-- Checkpoint save/load
-- MNIST loader that parses the original IDX files
-- Every operation verified against finite differences in the test suite
+- Ops: `matmul`, `add` with row broadcasting, element-wise `mul`, `relu`, `tanh`,
+  `sigmoid`, and `sum`
+- `mse_loss`, and a fused, numerically stable `softmax_cross_entropy`
+- `Module`, `Linear` with He initialisation, `ReLU`, `Tanh`, `Sigmoid`, and
+  `Sequential`, with `train()` / `eval()`
+- `NoGradGuard` for inference without building a graph
+- A finite-difference gradient checker that tests every op, both losses, and a
+  full two-layer MLP
+- `Scalar`, the single-number engine from M0 that the tensor version grew out of
+  ([`scalar.hpp`](include/nabla/scalar.hpp), demo in [`src/main.cpp`](src/main.cpp))
+
+**Planned** (see [Roadmap](#roadmap))
+
+- SGD with momentum and weight decay, Adam, gradient clipping, and a cosine LR
+  schedule with warmup (M5)
+- MNIST loader that parses the original IDX files, `Dropout`, and an MLP that
+  trains to about 98% test accuracy (M6)
+- Checkpoint save/load and OpenMP on the matmul loop (M7)
 
 **What it deliberately doesn't have**
 
 - **2-D tensors only.** An MLP never needs more, and skipping N-d strides keeps
   every backward pass short enough to read in one sitting.
 - **`float` only.** No dtype dispatch, no templates over scalar types.
-- **CPU only.** OpenMP on the hot loops, no CUDA.
+- **CPU only.** No CUDA.
 - **No BLAS.** The matmul is a hand-written loop. It is slower than OpenBLAS and
   that is the intended trade — the point is that you can read it.
 
@@ -99,32 +137,36 @@ everything opaquely.
 
 ## Build
 
-Header-only. Copy `include/nabla/` into your project and add it to your include
-path, or use CMake:
+Header-only. Copy `include/nabla/` into your project and add `include/` to your
+include path, then `#include "nabla/nabla.hpp"`. To build the tests and examples
+in this repository:
 
 ```bash
 git clone https://github.com/AlexanderDev-src/nabla.git
 cd nabla
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build
+./build/nabla_tests
 ```
 
-Requires a C++17 compiler. Tested on GCC 11+, Clang 14+, MSVC 19.3+.
+Requires a C++23 compiler and CMake 3.20 or newer (the first version that
+accepts `CMAKE_CXX_STANDARD 23`). Tested on GCC 16.2 and
+Clang 22.1 on Linux. The CMake file passes GCC/Clang warning flags, so MSVC is
+not supported as is.
 
-With CMake in your own project:
+The build makes four targets:
 
-```cmake
-add_subdirectory(nabla)
-target_link_libraries(your_target PRIVATE nabla)
-```
+| Target             | What it is                                       |
+| ------------------ | ------------------------------------------------ |
+| `nabla_tests`      | The test suite (`tests/*.cpp`)                   |
+| `xor`              | The XOR example above                            |
+| `nabla`            | The M0 `Scalar` demo in `src/main.cpp`           |
+| `harness_selftest` | Checks the test harness itself                   |
 
-Run the examples:
+Run the example:
 
 ```bash
 ./build/xor
-./scripts/get_mnist.sh
-./build/mnist_mlp --data data --epochs 15
 ```
 
 ---
@@ -149,11 +191,14 @@ came from, and how to push gradient back into them.
  ◄────────────────────────────────────────────────────── backward
 ```
 
-Each node holds:
+Each node (`TensorImpl`) holds:
 
 ```cpp
-std::vector<TensorPtr>  parents;      // where this value came from
-std::function<void()>   backward_fn;  // reads my .grad, adds into parents' .grad
+std::vector<float> data;
+std::vector<float> grad;
+bool requires_grad = false;
+std::vector<std::shared_ptr<TensorImpl>> parents;                  // where this value came from
+std::function<void(const std::vector<float> &upstream)> backward_fn; // adds into parents' grad
 ```
 
 Nothing is precomputed. The graph is whatever your control flow happened to
@@ -166,7 +211,8 @@ Calling `.backward()` on a scalar does three things:
 
 1. **Topologically sort** the graph reachable from that scalar.
 2. **Seed** its gradient with 1.0 — because ∂L/∂L = 1.
-3. **Walk the sorted list in reverse**, calling each node's `backward_fn`.
+3. **Walk the sorted list in reverse**, calling each node's `backward_fn` with
+   that node's gradient.
 
 The sort is what makes this correct. If a tensor feeds two different operations,
 its gradient is the _sum_ of both paths, and it must not propagate anything until
@@ -176,6 +222,11 @@ that: a node is visited only after every node that consumes it.
 This is why every `backward_fn` accumulates with `+=` rather than assigning. Miss
 that in a single op and a diamond-shaped graph will silently lose half its
 gradient — the model still trains, just worse, with nothing to point at.
+
+Before the walk, `backward()` zeroes the gradient of every intermediate node, so
+calling it twice on the same graph does not double them. Leaf tensors, such as
+weights, are left alone: their gradients keep accumulating until the caller
+zeroes them.
 
 ### Why reverse mode
 
@@ -208,55 +259,73 @@ to the logits gives:
 $$\frac{\partial L}{\partial z_j} = p_j - \mathbb{1}[j = y]$$
 
 The softmax probabilities, minus one at the true class. Averaged over a batch of
-size _m_, that is the entire backward pass:
+`B` rows, that is the entire backward pass
+([`loss.hpp`](include/nabla/loss.hpp)):
 
 ```cpp
-const float g = out_grad / m;
-for (int j = 0; j < C; ++j) logit_grad[row + j] += g * probs[row + j];
-logit_grad[row + labels[i]] -= g;
+for (std::size_t i = 0; i < B; ++i) {
+    for (std::size_t j = 0; j < C; ++j) {
+        float y = (j == labels[i]) ? 1.0f : 0.0f;
+        li->grad[i * C + j] +=
+            g[0] * (probs[i * C + j] - y) / static_cast<float>(B);
+    }
+}
 ```
 
-Three lines, no `exp`, no division, nothing that can overflow. Computing the two
-operations separately gives the same answer mathematically while being both
-slower and less stable.
+No `exp`, nothing that can overflow: the probabilities were already computed in
+the forward pass and kept for this. Computing the two operations separately
+gives the same answer mathematically while being both slower and less stable.
+The test suite checks that a logit of 1000 gives no `inf` or `nan`.
 
 ---
 
 ## API tour
 
 ```cpp
-// Tensors — 2-D, row-major
-auto a = nabla::Tensor::zeros(3, 4, /*requires_grad=*/true);
-auto b = nabla::Tensor::randn(4, 2, /*stddev=*/0.1f, rng, true);
-auto c = nabla::Tensor::from(2, 2, {1, 2, 3, 4});
+#include "nabla/nabla.hpp"
+using namespace nabla;
+
+std::mt19937 rng(42);
+
+// Tensors — 2-D, row-major. Copying a Tensor copies the handle, not the data.
+Tensor a = Tensor::zeros(3, 4);
+Tensor b = Tensor::randn(4, 2, rng, /*mean=*/0.0f, /*stddev=*/0.1f);
+Tensor c = Tensor::from(2, 2, {1, 2, 3, 4});
+a.set_requires_grad(true);
+b.set_requires_grad(true);
 
 // Operations build the graph
-auto y = nabla::relu(nabla::matmul(a, b));
-auto loss = nabla::mean(y);
+Tensor loss = sum(relu(matmul(a, b)));
 loss.backward();
 
 // Gradients live next to the data
-a.grad()[0];
+float g = a.grad_at(0, 0);
 
-// Inference: no graph, no allocation for it
+// Layers
+Sequential model{std::make_shared<Linear>(784, 128, rng),
+                 std::make_shared<ReLU>(),
+                 std::make_shared<Linear>(128, 10, rng)};
+std::vector<Tensor> params = model.parameters();   // weight, bias, weight, bias
+model.eval();                                      // passed down to every layer
+
+// Losses
+Tensor l1 = mse_loss(pred, target);
+Tensor l2 = softmax_cross_entropy(logits, labels); // labels: std::vector<std::size_t>
+
+// Inference: no graph is recorded inside the guard
 {
-    nabla::NoGradGuard no_grad;
-    auto logits = model(x);
+    NoGradGuard no_grad;
+    Tensor logits = model.forward(x);
 }
-
-// Checkpoints
-auto params = model.parameters();
-nabla::save("model.nbla", params);
-nabla::load("model.nbla", params);
 ```
 
 ---
 
 ## Results
 
-<!-- TODO: fill in after training. Do not publish numbers you have not measured. -->
+<!-- TODO: fill in after training (M6). Do not publish numbers you have not measured. -->
 
-Model: `784 → 256 → ReLU → Dropout(0.2) → 128 → ReLU → Dropout(0.2) → 10`
+Planned model: `784 → 256 → ReLU → Dropout(0.2) → 128 → ReLU → Dropout(0.2) → 10`
 
 |                |                                          |
 | -------------- | ---------------------------------------- |
@@ -267,17 +336,13 @@ Model: `784 → 256 → ReLU → Dropout(0.2) → 128 → ReLU → Dropout(0.2) 
 | Optimiser      | AdamW, lr 1e-3, cosine decay with warmup |
 | Machine        | _TBD_                                    |
 
-Reproduce with:
-
-```bash
-./build/mnist_mlp --data data --epochs 15 --seed 1337
-```
+The MNIST example does not exist yet; it arrives in M6.
 
 ---
 
 ## Benchmark
 
-<!-- TODO: fill in. An honest loss here reads better than a missing section. -->
+<!-- TODO: fill in (M7). An honest loss here reads better than a missing section. -->
 
 Same architecture, same hyperparameters, PyTorch on CPU vs `nabla`:
 
@@ -286,10 +351,11 @@ Same architecture, same hyperparameters, PyTorch on CPU vs `nabla`:
 | Time per epoch      | _TBD_         | _TBD_ |
 | Final test accuracy | _TBD_         | _TBD_ |
 
-`nabla` is expected to be slower. The matmul here is a plain i-k-j loop with
-OpenMP over rows — no cache blocking, no SIMD kernels, no BLAS. PyTorch dispatches
-to MKL or OpenBLAS, which are decades of hand-tuned assembly. Closing that gap is
-a different project than understanding autodiff, so it is out of scope by choice.
+`nabla` is expected to be slower. The matmul here is a plain triple loop — no
+cache blocking, no SIMD kernels, no BLAS, and no OpenMP until M7. PyTorch
+dispatches to MKL or OpenBLAS, which are decades of hand-tuned assembly. Closing
+that gap is a different project than understanding autodiff, so it is out of
+scope by choice.
 
 ---
 
@@ -300,29 +366,44 @@ A few decisions that are easy to get wrong.
 **`Tensor` is a handle, not a value.** It wraps a `shared_ptr<TensorImpl>`, so
 copying a `Tensor` gives you another reference to the same node. If it deep-copied
 instead, two operations could not share an input, and the graph could not have a
-diamond in it.
+diamond in it. When you do want separate storage, ask for it with `clone()`.
 
-**Backward closures capture raw pointers, never `shared_ptr`.** A node whose
-closure holds a `shared_ptr` to itself can never be destroyed — a reference cycle
-that shows up as memory climbing steadily through training and nothing else. The
-graph is kept alive by the output tensor for as long as the backward pass needs
-it.
+**Backward closures capture their parents, never their own node.** Each
+`backward_fn` holds `shared_ptr`s to the tensors it read from, which keeps them
+alive for the backward pass. A closure that held a `shared_ptr` to its own node
+would form a reference cycle and the node could never be destroyed — memory
+climbing steadily through training and nothing else to show for it. Ownership
+only ever points from a node back to its inputs, so the whole graph is freed
+when the output tensor goes out of scope.
 
 **The topological sort is iterative.** A recursive DFS is shorter, but graph
 depth is unbounded — an unrolled loop is a deep graph — and blowing the C++ stack
-is an ugly way to find that out.
+is an ugly way to find that out. `backward()` uses an explicit stack instead.
 
-**Gradients accumulate.** `zero_grad()` is the caller's responsibility, exactly as
-in PyTorch, because a tensor can legitimately receive gradient from several
-places before a step.
+**Gradients accumulate.** Zeroing leaf gradients is the caller's responsibility,
+exactly as in PyTorch, because a tensor can legitimately receive gradient from
+several places before a step. Today that is the hand-written loop in the XOR
+example; from M5 it is `zero_grad()`.
 
-**The optimiser knows nothing about layers.** It takes a flat
-`std::vector<Tensor>` and never includes `nn.hpp`. That one-way dependency is what
-keeps the two halves of the library independent.
+**The optimiser will know nothing about layers.** The plan for M5 is that it
+takes a flat `std::vector<Tensor>` and never includes `nn.hpp`. That one-way
+dependency is what keeps the two halves of the library independent.
 
 ---
 
 ## Roadmap
+
+- [x] M0 · `Scalar` autograd on single numbers
+- [x] M1 · 2-D `Tensor` with `matmul` and broadcasting `add`, forward only
+- [x] M2 · The graph: `parents`, `backward_fn`, `relu`, and `backward()`
+- [x] M3 · Finite-difference gradient checker over every op
+- [x] M4 · `Module`, `Linear`, `Sequential`, activations, `mse_loss`,
+      `softmax_cross_entropy`, and the XOR example
+- [ ] M5 · Optimisers: SGD with momentum, Adam, gradient clipping, cosine LR schedule
+- [ ] M6 · MNIST: IDX loader, batching, `Dropout`, and an MLP at about 98% test accuracy
+- [ ] M7 · Checkpoints, OpenMP matmul, and a benchmark against PyTorch
+
+Further out:
 
 - [ ] `Conv2D` and pooling
 - [ ] N-dimensional tensors with general broadcasting
