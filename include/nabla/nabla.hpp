@@ -3,3 +3,4 @@
 #include "nabla/loss.hpp"
 #include "nabla/nn.hpp"
 #include "nabla/ops.hpp"
+#include "nabla/optim.hpp"
