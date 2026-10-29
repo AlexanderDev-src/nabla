@@ -172,10 +172,10 @@ inline float cosine_lr(std::size_t t, std::size_t warmup, std::size_t total,
 
     const double p =
         static_cast<double>(t - warmup) / static_cast<double>(total - warmup);
-    constexpr double pi = 3.14159265358979323846;
 
-    return static_cast<float>(min_lr + 0.5 * (max_lr - min_lr) *
-                                           (1.0 + std::cos(pi * p)));
+    return static_cast<float>(min_lr +
+                              0.5 * (max_lr - min_lr) *
+                                  (1.0 + std::cos(std::numbers::pi * p)));
 }
 
 } // namespace nabla
