@@ -37,7 +37,8 @@ bool same_values(const Tensor &a, const Tensor &b) {
         return false;
     }
     for (std::size_t k = 0; k < a.impl()->data.size(); ++k) {
-        if (std::fabs(a.impl()->data[k] - b.impl()->data[k]) >= 1e-5f) {
+        // !(x < tol) rather than x >= tol, so a NaN counts as a mismatch
+        if (!(std::fabs(a.impl()->data[k] - b.impl()->data[k]) < 1e-5f)) {
             return false;
         }
     }
