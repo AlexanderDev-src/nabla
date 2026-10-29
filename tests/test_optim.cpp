@@ -299,3 +299,99 @@ TEST(adam_two_params_own_state_same_t) {
     CHECK(data_is(a, {0.7f, 1, 1.3f}));
     CHECK(data_is(b, {0.7f, 1.3f}));
 }
+
+// ---- M5.5 · clip_grad_norm ------------------------------------------------
+
+namespace {
+
+bool grad_values_are(const Tensor &t, std::initializer_list<float> want) {
+    std::size_t k = 0;
+    for (float w : want) {
+        // !(x < tol) rather than x >= tol, so a NaN counts as a mismatch
+        if (!(std::fabs(t.impl()->grad[k] - w) < 1e-5f)) {
+            std::printf("  grad[%zu] = %.6f, want %.6f\n", k, t.impl()->grad[k],
+                        w);
+            return false;
+        }
+        ++k;
+    }
+    return true;
+}
+
+} // namespace
+
+// norm of [3, 4] is 5, so with max 1 the grads become [3, 4] / 5
+TEST(clip_returns_pre_clip_norm_and_scales) {
+    auto w = make_param(1, 2, {1, 1});
+    set_grad(w, {3, 4});
+    CHECK_NEAR(nabla::clip_grad_norm({w}, 1.0f), 5.0f);
+    CHECK(grad_values_are(w, {0.6f, 0.8f}));
+    CHECK(data_is(w, {1, 1}));
+}
+
+// already within max: nothing changes, and it is never scaled up to max
+TEST(clip_below_max_leaves_grads) {
+    auto w = make_param(1, 2, {1, 1});
+    set_grad(w, {3, 4});
+    CHECK_NEAR(nabla::clip_grad_norm({w}, 10.0f), 5.0f);
+    CHECK(grad_values_are(w, {3, 4}));
+}
+
+// one norm across all params: |a| = 3 and |b| = 4, together 5, so with
+// max 2.5 both are halved. Clipping each param on its own gives other numbers.
+TEST(clip_norm_spans_all_params) {
+    auto a = make_param(1, 3, {1, 1, 1});
+    auto b = make_param(2, 1, {1, 1});
+    set_grad(a, {1, -2, 2});
+    set_grad(b, {0, 4});
+    CHECK_NEAR(nabla::clip_grad_norm({a, b}, 2.5f), 5.0f);
+    CHECK(grad_values_are(a, {0.5f, -1, 1}));
+    CHECK(grad_values_are(b, {0, 2}));
+}
+
+// ---- M5.6 · set_lr and cosine_lr ------------------------------------------
+
+// both optimisers read lr from the base, so set_lr reaches their next step
+TEST(set_lr_changes_next_step) {
+    auto a = make_param(1, 2, {1, 1});
+    auto b = make_param(1, 2, {1, 1});
+    set_grad(a, {2, -1});
+    set_grad(b, {2, -1});
+    nabla::SGD sgd({a}, 0.1f);
+    nabla::Adam adam({b}, 0.1f);
+    CHECK_NEAR(sgd.lr(), 0.1f);
+    sgd.set_lr(0.5f);
+    adam.set_lr(0.5f);
+    CHECK_NEAR(sgd.lr(), 0.5f);
+    CHECK_NEAR(adam.lr(), 0.5f);
+    sgd.step();
+    adam.step();
+    CHECK(data_is(a, {0, 1.5f}));    // 1 - 0.5 * 2, 1 + 0.5 * 1
+    CHECK(data_is(b, {0.5f, 1.5f})); // first Adam step moves lr * sign(g)
+}
+
+// warmup 10, total 110, max 0.1, min 0.01
+TEST(cosine_lr_warmup_is_a_straight_line) {
+    CHECK_NEAR(nabla::cosine_lr(0, 10, 110, 0.1f, 0.01f), 0.0f);
+    CHECK_NEAR(nabla::cosine_lr(5, 10, 110, 0.1f, 0.01f), 0.05f);
+    CHECK_NEAR(nabla::cosine_lr(10, 10, 110, 0.1f, 0.01f), 0.1f);
+}
+
+// p = 0.25, 0.5, 0.75 and 1, so lr = 0.01 + 0.045 * (1 + cos(pi * p))
+TEST(cosine_lr_decays_to_min) {
+    CHECK_NEAR(nabla::cosine_lr(35, 10, 110, 0.1f, 0.01f), 0.0868198f);
+    CHECK_NEAR(nabla::cosine_lr(60, 10, 110, 0.1f, 0.01f), 0.055f);
+    CHECK_NEAR(nabla::cosine_lr(85, 10, 110, 0.1f, 0.01f), 0.0231802f);
+    CHECK_NEAR(nabla::cosine_lr(110, 10, 110, 0.1f, 0.01f), 0.01f);
+}
+
+TEST(cosine_lr_after_total_stays_at_min) {
+    CHECK_NEAR(nabla::cosine_lr(200, 10, 110, 0.1f, 0.01f), 0.01f);
+}
+
+// min_lr defaults to 0, and warmup 0 starts the cosine at once
+TEST(cosine_lr_defaults_and_no_warmup) {
+    CHECK_NEAR(nabla::cosine_lr(0, 0, 100, 0.1f), 0.1f);
+    CHECK_NEAR(nabla::cosine_lr(50, 0, 100, 0.1f), 0.05f);
+    CHECK_NEAR(nabla::cosine_lr(100, 0, 100, 0.1f), 0.0f);
+}
