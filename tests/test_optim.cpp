@@ -34,7 +34,9 @@ Tensor make_param(std::size_t rows, std::size_t cols,
 // grad of t equals scale * c, element by element
 bool grad_is(const Tensor &t, const Tensor &c, float scale) {
     for (std::size_t k = 0; k < t.impl()->grad.size(); ++k) {
-        if (std::fabs(t.impl()->grad[k] - scale * c.impl()->data[k]) >= 1e-5f) {
+        // !(x < tol) rather than x >= tol, so a NaN counts as a mismatch
+        if (!(std::fabs(t.impl()->grad[k] - scale * c.impl()->data[k]) <
+              1e-5f)) {
             return false;
         }
     }
@@ -79,7 +81,8 @@ TEST(optim_zero_grad_then_backward_gives_single) {
 TEST(optim_zero_grad_clears_every_param) {
     auto w = make_param(2, 3, {1, 2, 3, 4, 5, 6});
     auto b = make_param(1, 2, {7, 8});
-    backward_weighted_sum(w, Tensor::from(2, 3, {0.5f, -1, 2, 3, -0.25f, 1.5f}));
+    backward_weighted_sum(w,
+                          Tensor::from(2, 3, {0.5f, -1, 2, 3, -0.25f, 1.5f}));
     backward_weighted_sum(b, Tensor::from(1, 2, {4, -2}));
     NoStep opt({w, b});
     opt.zero_grad();
@@ -89,7 +92,8 @@ TEST(optim_zero_grad_clears_every_param) {
 
 TEST(optim_zero_grad_keeps_data) {
     auto w = make_param(2, 3, {1, 2, 3, 4, 5, 6});
-    backward_weighted_sum(w, Tensor::from(2, 3, {0.5f, -1, 2, 3, -0.25f, 1.5f}));
+    backward_weighted_sum(w,
+                          Tensor::from(2, 3, {0.5f, -1, 2, 3, -0.25f, 1.5f}));
     NoStep opt({w});
     opt.zero_grad();
     const std::vector<float> want = {1, 2, 3, 4, 5, 6};
@@ -133,7 +137,8 @@ void set_grad(const Tensor &t, std::initializer_list<float> g) {
 bool data_is(const Tensor &t, std::initializer_list<float> want) {
     std::size_t k = 0;
     for (float w : want) {
-        if (std::fabs(t.impl()->data[k] - w) >= 1e-5f) {
+        // !(x < tol) rather than x >= tol, so a NaN counts as a mismatch
+        if (!(std::fabs(t.impl()->data[k] - w) < 1e-5f)) {
             std::printf("  data[%zu] = %.6f, want %.6f\n", k, t.impl()->data[k],
                         w);
             return false;
@@ -200,8 +205,10 @@ TEST(sgd_momentum_with_weight_decay) {
 }
 
 // each parameter keeps its own velocity, and shapes differ so a mix-up shows
-// a: v = [1, 0, 1] then [1.9, 0, 1.9]  data = [0.9, 1, 0.9] then [0.71, 1, 0.71]
-// b: v = [0, 2]    then [0, 3.8]       data = [1, 0.8]      then [1, 0.42]
+// a: v    = [1, 0, 1]   then [1.9, 0, 1.9]
+//    data = [0.9, 1, 0.9] then [0.71, 1, 0.71]
+// b: v    = [0, 2]   then [0, 3.8]
+//    data = [1, 0.8] then [1, 0.42]
 TEST(sgd_momentum_per_param) {
     auto a = make_param(1, 3, {1, 1, 1});
     auto b = make_param(2, 1, {1, 1});
@@ -212,4 +219,83 @@ TEST(sgd_momentum_per_param) {
     opt.step();
     CHECK(data_is(a, {0.71f, 1, 0.71f}));
     CHECK(data_is(b, {1, 0.42f}));
+}
+
+// ---- M5.3 · Linear regression with SGD ------------------------------------
+
+// y = 2 x0 - 3 x1 + 0.5 with no noise, so SGD should find those exact numbers
+TEST(sgd_linear_regression_recovers_weights) {
+    std::mt19937 rng(0);
+    const std::size_t n = 64;
+    Tensor x = Tensor::randn(n, 2, rng);
+    Tensor y = Tensor::zeros(n, 1);
+    for (std::size_t i = 0; i < n; ++i) {
+        y.impl()->data[i] = 2 * x.at(i, 0) - 3 * x.at(i, 1) + 0.5f;
+    }
+    nabla::Linear model(2, 1, rng);
+    nabla::SGD opt(model.parameters(), 0.1f);
+
+    for (int step = 0; step < 200; ++step) {
+        opt.zero_grad();
+        auto prev = model.forward(x);
+        auto loss = nabla::mse_loss(prev, y);
+        loss.backward();
+        opt.step();
+    }
+
+    CHECK(std::fabs(model.weight.at(0, 0) - 2.0f) < 1e-3f);
+    CHECK(std::fabs(model.weight.at(1, 0) + 3.0f) < 1e-3f);
+    CHECK(std::fabs(model.bias.at(0, 0) - 0.5f) < 1e-3f);
+}
+
+// ---- M5.4 · Adam --------------------------------------------------------
+
+// On the first step m_hat = g and v_hat = g * g, so every element moves by
+// lr * g / |g| = lr * sign(g), whether g is 0.001 or 1000. g = 0 stays put.
+TEST(adam_first_step_is_lr_times_sign) {
+    auto w = make_param(2, 3, {1, 1, 1, 1, 1, 1});
+    set_grad(w, {0.001f, -5, 1000, -0.02f, 0, 3});
+    nabla::Adam opt({w}, 0.1f);
+    opt.step();
+    CHECK(data_is(w, {0.9f, 1.1f, 0.9f, 1.1f, 1, 0.9f}));
+}
+
+TEST(adam_step_keeps_grad) {
+    auto w = make_param(1, 2, {1, -2});
+    set_grad(w, {0.5f, -1});
+    nabla::Adam opt({w}, 0.1f);
+    opt.step();
+    const std::vector<float> want = {0.5f, -1};
+    CHECK(w.impl()->grad == want);
+}
+
+// step 1: m = [0.05, -0.1],    v = [0.00025, 0.001],      data = [0.9, -1.9]
+// step 2: m = [-0.055, 0.11],  v = [0.00124975, 0.004999]
+//         m_hat = m / 0.19,    v_hat = v / 0.001999
+//         data = [0.936610, -1.936610]
+TEST(adam_two_steps_by_hand) {
+    auto w = make_param(1, 2, {1, -2});
+    nabla::Adam opt({w}, 0.1f);
+    set_grad(w, {0.5f, -1});
+    opt.step();
+    CHECK(data_is(w, {0.9f, -1.9f}));
+    set_grad(w, {-1, 2});
+    opt.step();
+    CHECK(data_is(w, {0.93661f, -1.93661f}));
+}
+
+// With a constant g, m_hat = g and v_hat = g * g at every t, so each step
+// moves exactly lr * sign(g). That only holds if both params see the same t
+// and each keeps its own m and v; shapes differ so a mix-up shows.
+TEST(adam_two_params_own_state_same_t) {
+    auto a = make_param(1, 3, {1, 1, 1});
+    auto b = make_param(2, 1, {1, 1});
+    set_grad(a, {1, 0, -2});
+    set_grad(b, {0.5f, -3});
+    nabla::Adam opt({a, b}, 0.1f);
+    opt.step();
+    opt.step();
+    opt.step();
+    CHECK(data_is(a, {0.7f, 1, 1.3f}));
+    CHECK(data_is(b, {0.7f, 1.3f}));
 }
