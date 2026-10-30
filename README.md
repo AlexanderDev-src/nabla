@@ -535,14 +535,6 @@ threads sleep instead, which brought 12 threads back to about 6.6 s.
 - [x] M6 · MNIST: IDX loader, batching, `Dropout`, and an MLP at about 98% test accuracy
 - [x] M7 · Checkpoints, OpenMP matmul, and a benchmark against PyTorch
 
-Further out:
-
-- [ ] `Conv2D` and pooling
-- [ ] N-dimensional tensors with general broadcasting
-- [ ] Cache-blocked and SIMD matmul kernels
-- [ ] Batch normalisation and layer normalisation
-- [ ] Browser demo compiled to WebAssembly
-
 ---
 
 ## Acknowledgements
