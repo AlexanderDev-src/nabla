@@ -76,6 +76,7 @@ Leaf gradients accumulate across `backward()` calls, so every step starts with
 - [How reverse-mode autodiff works](#how-reverse-mode-autodiff-works)
 - [The fused softmax + cross-entropy gradient](#the-fused-softmax--cross-entropy-gradient)
 - [API tour](#api-tour)
+- [Checkpoints](#checkpoints)
 - [Results](#results)
 - [Benchmark](#benchmark)
 - [Design notes](#design-notes)
@@ -88,7 +89,7 @@ Leaf gradients accumulate across `backward()` calls, so every step starts with
 A learning-grade automatic differentiation engine, written to understand how
 PyTorch's `autograd` actually works — and then made fast enough and complete
 enough to train a real model on a real dataset. It is built in numbered
-milestones; M0 to M6 are done.
+milestones; M0 to M6 are done, and M7 is under way.
 
 **What it has today**
 
@@ -103,6 +104,8 @@ milestones; M0 to M6 are done.
   LR schedule with linear warmup
 - An MNIST pipeline: a parser for the original IDX files, pixel normalisation,
   shuffled mini-batches, and a batched `evaluate()`
+- Binary checkpoints that a ten-line Python function can read, see
+  [Checkpoints](#checkpoints)
 - A finite-difference gradient checker that tests every op, both losses, and a
   full two-layer MLP
 - `Scalar`, the single-number engine from M0 that the tensor version grew out of
@@ -110,7 +113,7 @@ milestones; M0 to M6 are done.
 
 **Planned** (see [Roadmap](#roadmap))
 
-- Checkpoint save/load and OpenMP on the matmul loop (M7)
+- OpenMP on the matmul loop and a benchmark against PyTorch (M7)
 
 **What it deliberately doesn't have**
 
@@ -318,6 +321,48 @@ opt.step();
     NoGradGuard no_grad;
     Tensor logits = model.forward(x);
 }
+
+// Checkpoints hold parameter values only, so load into a model built the same way
+save_checkpoint("model.nbla", model);
+load_checkpoint("model.nbla", model);   // throws if the count or a shape differs
+```
+
+---
+
+## Checkpoints
+
+`save_checkpoint` writes `model.parameters()` in order, every number
+little-endian:
+
+```
+"NBLA"                  4 bytes
+version                 u32, 1
+count                   u32, the number of tensors
+then for each tensor:
+  rows, cols            u32 each
+  rows * cols values    f32 each, row-major
+```
+
+There are no layer names, grads or optimiser state, so a checkpoint fits only a
+model built the same way. `load_checkpoint` checks the count and every shape, and
+reads the whole file before it touches the model: if it throws, the model is
+exactly as it was.
+
+The format is simple enough that Python reads it in ten lines
+([`scripts/read_checkpoint.py`](scripts/read_checkpoint.py)):
+
+```python
+def read_checkpoint(path):
+    with open(path, "rb") as f:
+        magic, version, count = struct.unpack("<4sII", f.read(12))
+        if magic != b"NBLA" or version != 1:
+            raise ValueError(f"{path} is not a version 1 nabla checkpoint")
+        tensors = []
+        for _ in range(count):
+            rows, cols = struct.unpack("<II", f.read(8))
+            data = np.frombuffer(f.read(4 * rows * cols), dtype="<f4")
+            tensors.append(data.reshape(rows, cols))
+        return tensors
 ```
 
 ---
@@ -352,6 +397,15 @@ To run it, from the repository root, since it reads `data/`:
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j --target mnist_mlp
 ./build/mnist_mlp --epochs 15 --batch 64 --lr 1e-3
+```
+
+`--save model.nbla` writes a checkpoint after every epoch.
+[`scripts/eval_checkpoint.py`](scripts/eval_checkpoint.py) runs that checkpoint
+on the test set in numpy, without nabla. After one epoch both printed 96.43%:
+
+```bash
+./build/mnist_mlp --epochs 1 --save model.nbla
+python3 scripts/eval_checkpoint.py model.nbla
 ```
 
 ---
@@ -417,7 +471,7 @@ what keeps the two halves of the library independent.
       `softmax_cross_entropy`, and the XOR example
 - [x] M5 · Optimisers: SGD with momentum, Adam, gradient clipping, cosine LR schedule
 - [x] M6 · MNIST: IDX loader, batching, `Dropout`, and an MLP at about 98% test accuracy
-- [ ] M7 · Checkpoints, OpenMP matmul, and a benchmark against PyTorch
+- [ ] M7 · Checkpoints (done), OpenMP matmul, and a benchmark against PyTorch
 
 Further out:
 
