@@ -21,6 +21,9 @@ inline Tensor matmul(const Tensor &a, const Tensor &b) {
 
     auto out = make_node(a.rows(), b.cols(), {a, b});
 
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
     for (std::size_t i = 0; i < a.rows(); ++i) {
         for (std::size_t j = 0; j < b.cols(); ++j) {
             float sum = 0;
@@ -37,17 +40,31 @@ inline Tensor matmul(const Tensor &a, const Tensor &b) {
         out.impl()->backward_fn = [ai, bimpl](const std::vector<float> &g) {
             // A = m * k , B = k * n, g = m * n -> matrix
             const std::size_t m = ai->rows, k = ai->cols, n = bimpl->cols;
-            for (std::size_t i = 0; i < m; ++i) {
-                for (std::size_t j = 0; j < n; ++j) {
-                    const float g_ij = g[i * n + j];
-                    for (std::size_t p = 0; p < k; ++p) {
-                        if (ai->requires_grad) {
+            // Each thread owns a gradient row; keep the two passes separate
+            // because A and B can refer to the same tensor.
+            if (ai->requires_grad) {
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+                for (std::size_t i = 0; i < m; ++i) {
+                    for (std::size_t j = 0; j < n; ++j) {
+                        const float g_ij = g[i * n + j];
+                        for (std::size_t p = 0; p < k; ++p) {
                             ai->grad[i * k + p] +=
                                 g_ij * bimpl->data[p * n + j];
                         }
-                        if (bimpl->requires_grad) {
+                    }
+                }
+            }
+            if (bimpl->requires_grad) {
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+                for (std::size_t p = 0; p < k; ++p) {
+                    for (std::size_t i = 0; i < m; ++i) {
+                        for (std::size_t j = 0; j < n; ++j) {
                             bimpl->grad[p * n + j] +=
-                                ai->data[i * k + p] * g_ij;
+                                ai->data[i * k + p] * g[i * n + j];
                         }
                     }
                 }
