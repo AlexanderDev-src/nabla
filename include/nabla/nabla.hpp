@@ -1,6 +1,7 @@
 #pragma once
-// Umbrella header: include this one file to get the whole library.
-#include "nabla/loss.hpp"
-#include "nabla/nn.hpp"
-#include "nabla/ops.hpp"
-#include "nabla/optim.hpp"
+#include "nabla/autograd.hpp" // IWYU pragma: export
+#include "nabla/loss.hpp"     // IWYU pragma: export
+#include "nabla/nn.hpp"       // IWYU pragma: export
+#include "nabla/ops.hpp"      // IWYU pragma: export
+#include "nabla/optim.hpp"    // IWYU pragma: export
+#include "nabla/tensor.hpp"   // IWYU pragma: export

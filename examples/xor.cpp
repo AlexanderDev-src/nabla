@@ -12,19 +12,13 @@ int main() {
         std::make_shared<Linear>(8, 1, rng), std::make_shared<Sigmoid>()};
     const Tensor x = Tensor::from(4, 2, {0, 0, 0, 1, 1, 0, 1, 1});
     const Tensor y = Tensor::from(4, 1, {0, 1, 1, 0});
-    const float lr = 0.5f;
+    SGD optimizer(model.parameters(), 0.5f);
 
     for (int step = 0; step <= 2000; ++step) {
+        optimizer.zero_grad();
         Tensor loss = mse_loss(model.forward(x), y);
         loss.backward();
-        for (auto &p : model.parameters()) {
-            auto &data = p.impl()->data;
-            auto &grad = p.impl()->grad;
-            for (std::size_t k = 0; k < data.size(); ++k) {
-                data[k] -= lr * grad[k];
-                grad[k] = 0;
-            }
-        }
+        optimizer.step();
         if (step % 250 == 0) {
             std::printf("step %4d  loss %.6f\n", step, loss.at(0, 0));
         }
