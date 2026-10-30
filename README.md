@@ -89,7 +89,7 @@ Leaf gradients accumulate across `backward()` calls, so every step starts with
 A learning-grade automatic differentiation engine, written to understand how
 PyTorch's `autograd` actually works — and then made fast enough and complete
 enough to train a real model on a real dataset. It is built in numbered
-milestones; M0 to M6 are done, and M7 is under way.
+milestones; M0 to M7 are done.
 
 **What it has today**
 
@@ -115,7 +115,8 @@ milestones; M0 to M6 are done, and M7 is under way.
 
 **Planned** (see [Roadmap](#roadmap))
 
-- A benchmark against PyTorch (M7)
+- The optional end of M7: `t[i, j]` indexing behind
+  `__cpp_multidimensional_subscript`
 
 **What it deliberately doesn't have**
 
@@ -427,20 +428,50 @@ python3 scripts/eval_checkpoint.py model.nbla
 
 ## Benchmark
 
-<!-- TODO: fill in (M7). An honest loss here reads better than a missing section. -->
+The same MLP, initialisation, optimiser, schedule, clipping and batch size in
+PyTorch 2.15 on the CPU ([`scripts/mnist_torch.py`](scripts/mnist_torch.py)),
+15 epochs each, on the machine from [Results](#results). Times are the median
+epoch of one run. [`scripts/benchmark.py`](scripts/benchmark.py) runs all four
+and prints the numbers.
 
-Same architecture, same hyperparameters, PyTorch on CPU vs `nabla`:
+| Threads | nabla   | PyTorch | nabla is slower by | nabla acc | PyTorch acc |
+| ------- | ------- | ------- | ------------------ | --------- | ----------- |
+| 1       | 17.77 s | 1.65 s  | 10.8×              | 98.40%    | 98.47%      |
+| 6       | 6.01 s  | 1.71 s  | 3.5×               | 98.40%    | 98.50%      |
 
-|                     | PyTorch (CPU) | nabla |
-| ------------------- | ------------- | ----- |
-| Time per epoch      | _TBD_         | _TBD_ |
-| Final test accuracy | _TBD_         | _TBD_ |
+Both reach the same accuracy, so nabla's gradients, Adam and schedule do their
+job; the small difference comes from different random numbers.
 
-`nabla` is expected to be slower. The matmul here is a plain triple loop that
-OpenMP splits across cores — no cache blocking, no SIMD kernels, no BLAS.
-PyTorch dispatches to MKL or OpenBLAS, which are decades of hand-tuned assembly.
-Closing that gap is a different project than understanding autodiff, so it is
-out of scope by choice.
+nabla is about 11 times slower on one thread and 3.5 times slower on six. An
+epoch is about 60 GFLOP of matmul work, so nabla runs at about 3.6 GFLOP/s on
+one thread and 10 on six, against about 37 for PyTorch on one. Nearly all of
+that arithmetic is matmul, and that is where the two differ:
+
+- **SIMD.** PyTorch calls MKL, which multiplies and adds 8 or 16 floats per
+  instruction (AVX2, AVX-512). nabla is built without `-march=native`, and its
+  forward loop adds into a single `sum` in order, which the compiler may not
+  reorder, so it mostly does one at a time.
+- **Cache.** MKL works on blocks that fit in cache and reuses each value it
+  loads many times. nabla's forward reads B down a column, a whole row apart per
+  step.
+- **Batch 64 is small.** Much of PyTorch's time is the cost of each operation
+  rather than the arithmetic, which is why six threads do not help it.
+
+Single epochs varied a lot on this laptop, which changes its clock speed: nabla
+on one thread took 15.0 to 20.4 s, PyTorch on six 1.1 to 2.0 s. Take the ratios
+as rough. Closing the gap would mean writing a BLAS, which is a different
+project than understanding autodiff, so it is out of scope by choice.
+
+To run it, after building `mnist_mlp` in Release as in [Results](#results):
+
+```bash
+uv venv .venv
+uv pip install --python .venv torch numpy \
+    --index-url https://download.pytorch.org/whl/cpu
+python3 scripts/benchmark.py
+```
+
+The CPU index matters: the default one installs the CUDA build, several GB.
 
 ---
 
@@ -502,7 +533,7 @@ threads sleep instead, which brought 12 threads back to about 6.6 s.
       `softmax_cross_entropy`, and the XOR example
 - [x] M5 · Optimisers: SGD with momentum, Adam, gradient clipping, cosine LR schedule
 - [x] M6 · MNIST: IDX loader, batching, `Dropout`, and an MLP at about 98% test accuracy
-- [ ] M7 · Checkpoints and OpenMP matmul (done), benchmark against PyTorch
+- [x] M7 · Checkpoints, OpenMP matmul, and a benchmark against PyTorch
 
 Further out:
 
