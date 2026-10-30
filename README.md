@@ -32,19 +32,13 @@ int main() {
         std::make_shared<Linear>(8, 1, rng), std::make_shared<Sigmoid>()};
     const Tensor x = Tensor::from(4, 2, {0, 0, 0, 1, 1, 0, 1, 1});
     const Tensor y = Tensor::from(4, 1, {0, 1, 1, 0});
-    const float lr = 0.5f;
+    SGD optimizer(model.parameters(), 0.5f);
 
     for (int step = 0; step <= 2000; ++step) {
+        optimizer.zero_grad();
         Tensor loss = mse_loss(model.forward(x), y);
         loss.backward();
-        for (auto &p : model.parameters()) {
-            auto &data = p.impl()->data;
-            auto &grad = p.impl()->grad;
-            for (std::size_t k = 0; k < data.size(); ++k) {
-                data[k] -= lr * grad[k];
-                grad[k] = 0;
-            }
-        }
+        optimizer.step();
         if (step % 250 == 0) {
             std::printf("step %4d  loss %.6f\n", step, loss.at(0, 0));
         }
@@ -66,10 +60,8 @@ step 2000  loss 0.000462
 ```
 
 No layer ever implements `backward()` — the graph knows how to reverse itself.
-The parameter update is still written by hand, because there is no optimiser
-yet. Leaf gradients accumulate across `backward()` calls, so the loop zeroes
-each one after using it. Milestone M5 replaces those eight lines with
-`opt.step()` and `opt.zero_grad()`.
+Leaf gradients accumulate across `backward()` calls, so every step starts with
+`zero_grad()`; `step()` then moves each parameter against its gradient.
 
 > XOR is the smallest honest test of an autodiff engine: a single linear layer
 > provably cannot solve it, so if this converges, the hidden layer and its
@@ -96,7 +88,7 @@ each one after using it. Milestone M5 replaces those eight lines with
 A learning-grade automatic differentiation engine, written to understand how
 PyTorch's `autograd` actually works — and then made fast enough and complete
 enough to train a real model on a real dataset. It is built in numbered
-milestones; M0 to M4 are done.
+milestones; M0 to M5 are done.
 
 **What it has today**
 
@@ -107,6 +99,8 @@ milestones; M0 to M4 are done.
 - `Module`, `Linear` with He initialisation, `ReLU`, `Tanh`, `Sigmoid`, and
   `Sequential`, with `train()` / `eval()`
 - `NoGradGuard` for inference without building a graph
+- `SGD` with momentum and weight decay, `Adam`, `clip_grad_norm`, and a cosine
+  LR schedule with linear warmup
 - A finite-difference gradient checker that tests every op, both losses, and a
   full two-layer MLP
 - `Scalar`, the single-number engine from M0 that the tensor version grew out of
@@ -114,8 +108,6 @@ milestones; M0 to M4 are done.
 
 **Planned** (see [Roadmap](#roadmap))
 
-- SGD with momentum and weight decay, Adam, gradient clipping, and a cosine LR
-  schedule with warmup (M5)
 - MNIST loader that parses the original IDX files, `Dropout`, and an MLP that
   trains to about 98% test accuracy (M6)
 - Checkpoint save/load and OpenMP on the matmul loop (M7)
@@ -312,6 +304,14 @@ model.eval();                                      // passed down to every layer
 Tensor l1 = mse_loss(pred, target);
 Tensor l2 = softmax_cross_entropy(logits, labels); // labels: std::vector<std::size_t>
 
+// Optimisers take the flat parameter list. One training step:
+Adam opt(params, /*lr=*/1e-3f);
+opt.zero_grad();                              // grads accumulate otherwise
+l2.backward();
+float norm = clip_grad_norm(params, 1.0f);    // returns the norm before clipping
+opt.set_lr(cosine_lr(t, /*warmup=*/100, /*total=*/1000, /*max_lr=*/1e-3f));
+opt.step();
+
 // Inference: no graph is recorded inside the guard
 {
     NoGradGuard no_grad;
@@ -382,12 +382,12 @@ is an ugly way to find that out. `backward()` uses an explicit stack instead.
 
 **Gradients accumulate.** Zeroing leaf gradients is the caller's responsibility,
 exactly as in PyTorch, because a tensor can legitimately receive gradient from
-several places before a step. Today that is the hand-written loop in the XOR
-example; from M5 it is `zero_grad()`.
+several places before a step. In a training loop that is
+`Optimizer::zero_grad()`.
 
-**The optimiser will know nothing about layers.** The plan for M5 is that it
-takes a flat `std::vector<Tensor>` and never includes `nn.hpp`. That one-way
-dependency is what keeps the two halves of the library independent.
+**The optimiser knows nothing about layers.** It takes a flat
+`std::vector<Tensor>` and never includes `nn.hpp`. That one-way dependency is
+what keeps the two halves of the library independent.
 
 ---
 
@@ -399,7 +399,7 @@ dependency is what keeps the two halves of the library independent.
 - [x] M3 · Finite-difference gradient checker over every op
 - [x] M4 · `Module`, `Linear`, `Sequential`, activations, `mse_loss`,
       `softmax_cross_entropy`, and the XOR example
-- [ ] M5 · Optimisers: SGD with momentum, Adam, gradient clipping, cosine LR schedule
+- [x] M5 · Optimisers: SGD with momentum, Adam, gradient clipping, cosine LR schedule
 - [ ] M6 · MNIST: IDX loader, batching, `Dropout`, and an MLP at about 98% test accuracy
 - [ ] M7 · Checkpoints, OpenMP matmul, and a benchmark against PyTorch
 
