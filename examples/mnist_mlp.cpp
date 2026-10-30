@@ -15,12 +15,14 @@ int main(int argc, char **argv) {
     std::size_t epochs = 15;
     std::size_t batch_size = 64;
     float lr = 1e-3f;
+    std::string save_path;
 
     try {
         for (int i = 1; i < argc; i += 2) {
             const std::string_view flag = argv[i];
 
-            if (flag != "--epochs" && flag != "--batch" && flag != "--lr") {
+            if (flag != "--epochs" && flag != "--batch" && flag != "--lr" &&
+                flag != "--save") {
                 std::fprintf(stderr, "Unknown flag: %s\n", argv[i]);
                 return 1;
             }
@@ -32,6 +34,15 @@ int main(int argc, char **argv) {
 
             const std::string value = argv[i + 1];
             std::size_t parsed = 0;
+
+            if (flag == "--save") {
+                if (value.empty()) {
+                    throw std::invalid_argument(
+                        "--save path must not be empty");
+                }
+                save_path = value;
+                continue;
+            }
 
             if (flag == "--lr") {
                 lr = std::stof(value, &parsed);
@@ -128,6 +139,10 @@ int main(int argc, char **argv) {
 
             std::printf("epoch %zu  loss %.4f  accuracy %.2f%%  time %.2fs\n",
                         epoch, loss_sum / steps, accuracy * 100.0f, secs);
+
+            if (!save_path.empty()) {
+                save_checkpoint(save_path, model);
+            }
         }
     } catch (const std::exception &error) {
         std::fprintf(stderr, "Error: %s\n", error.what());
