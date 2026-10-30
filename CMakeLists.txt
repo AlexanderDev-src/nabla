@@ -38,3 +38,8 @@ target_compile_options(harness_selftest PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(xor ${CMAKE_SOURCE_DIR}/examples/xor.cpp)
 target_include_directories(xor PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_compile_options(xor PRIVATE -Wall -Wextra -Wpedantic)
+
+# Training is far too slow in Debug: cbuild -t Release -T mnist_mlp run
+add_executable(mnist_mlp ${CMAKE_SOURCE_DIR}/examples/mnist_mlp.cpp)
+target_include_directories(mnist_mlp PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_compile_options(mnist_mlp PRIVATE -Wall -Wextra -Wpedantic)
