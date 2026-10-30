@@ -43,3 +43,14 @@ target_compile_options(xor PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(mnist_mlp ${CMAKE_SOURCE_DIR}/examples/mnist_mlp.cpp)
 target_include_directories(mnist_mlp PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_compile_options(mnist_mlp PRIVATE -Wall -Wextra -Wpedantic)
+
+# 8. OpenMP, when the compiler has it: matmul in ops.hpp then splits its loops
+#    over threads (OMP_NUM_THREADS sets how many). Without it the pragmas are
+#    skipped and everything runs on one thread. To build without it anyway:
+#    -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=ON
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    foreach(target nabla_tests xor mnist_mlp)
+        target_link_libraries(${target} PRIVATE OpenMP::OpenMP_CXX)
+    endforeach()
+endif()

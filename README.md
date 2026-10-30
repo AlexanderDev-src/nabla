@@ -106,6 +106,8 @@ milestones; M0 to M6 are done, and M7 is under way.
   shuffled mini-batches, and a batched `evaluate()`
 - Binary checkpoints that a ten-line Python function can read, see
   [Checkpoints](#checkpoints)
+- OpenMP in `matmul`: forward and backward split their rows over threads, and
+  give the same bits on any number of threads
 - A finite-difference gradient checker that tests every op, both losses, and a
   full two-layer MLP
 - `Scalar`, the single-number engine from M0 that the tensor version grew out of
@@ -113,7 +115,7 @@ milestones; M0 to M6 are done, and M7 is under way.
 
 **Planned** (see [Roadmap](#roadmap))
 
-- OpenMP on the matmul loop and a benchmark against PyTorch (M7)
+- A benchmark against PyTorch (M7)
 
 **What it deliberately doesn't have**
 
@@ -148,6 +150,11 @@ Requires a C++23 compiler and CMake 3.20 or newer (the first version that
 accepts `CMAKE_CXX_STANDARD 23`). Tested on GCC 16.2 and
 Clang 23.1 on Linux. The CMake file passes GCC/Clang warning flags, so MSVC is
 not supported as is.
+
+If the compiler has OpenMP, CMake links it and `matmul` runs on several
+threads; `OMP_NUM_THREADS` sets how many. Without OpenMP everything runs on one
+thread. To build without it anyway, add
+`-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=ON`.
 
 The build makes five targets:
 
@@ -376,19 +383,24 @@ def read_checkpoint(path):
 | -------------- | --------------------------------------------------------- |
 | Parameters     | 235,146                                                   |
 | Test accuracy  | 98.40% after 15 epochs, and 98% or more from epoch 5      |
-| Time per epoch | about 47 s on one core                                    |
+| Time per epoch | about 5.8 s on 6 threads, about 17 s on one               |
 | Epochs         | 15                                                        |
 | Batch size     | 64                                                        |
 | Optimiser      | Adam, lr 1e-3, cosine decay after half an epoch of warmup |
 | Gradient clip  | global norm 1.0                                           |
-| Machine        | AMD Ryzen 7 7445HS, GCC 16.2, Release build (`-O3`)       |
+| Machine        | AMD Ryzen 7 7445HS (6 cores), GCC 16.2, `-O3`, OpenMP     |
 
 ```
-epoch 1  loss 0.5573  accuracy 95.47%  time 48.37s
-epoch 5  loss 0.0743  accuracy 98.05%  time 46.42s
-epoch 10  loss 0.0266  accuracy 98.32%  time 46.40s
-epoch 15  loss 0.0130  accuracy 98.40%  time 46.95s
+epoch 1  loss 0.5573  accuracy 95.47%  time 5.69s
+epoch 5  loss 0.0743  accuracy 98.05%  time 5.88s
+epoch 10  loss 0.0266  accuracy 98.32%  time 6.02s
+epoch 15  loss 0.0130  accuracy 98.40%  time 5.94s
 ```
+
+Before OpenMP (M7.2) an epoch took about 47 s. The loss and accuracy are the
+same to every printed digit as in that run; only the time changed. Why one
+thread also got faster, and why 6 threads beat 12, is in
+[Design notes](#design-notes).
 
 To run it, from the repository root, since it reads `data/`:
 
@@ -396,12 +408,15 @@ To run it, from the repository root, since it reads `data/`:
 ./scripts/get_mnist.sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j --target mnist_mlp
-./build/mnist_mlp --epochs 15 --batch 64 --lr 1e-3
+OMP_NUM_THREADS=6 ./build/mnist_mlp --epochs 15 --batch 64 --lr 1e-3
 ```
+
+Set `OMP_NUM_THREADS` to the number of physical cores, not hardware threads.
 
 `--save model.nbla` writes a checkpoint after every epoch.
 [`scripts/eval_checkpoint.py`](scripts/eval_checkpoint.py) runs that checkpoint
-on the test set in numpy, without nabla. After one epoch both printed 96.43%:
+on the test set in numpy, without nabla. After one epoch both printed 96.43%,
+and after 15 both printed 98.40%:
 
 ```bash
 ./build/mnist_mlp --epochs 1 --save model.nbla
@@ -421,11 +436,11 @@ Same architecture, same hyperparameters, PyTorch on CPU vs `nabla`:
 | Time per epoch      | _TBD_         | _TBD_ |
 | Final test accuracy | _TBD_         | _TBD_ |
 
-`nabla` is expected to be slower. The matmul here is a plain triple loop — no
-cache blocking, no SIMD kernels, no BLAS, and no OpenMP until M7. PyTorch
-dispatches to MKL or OpenBLAS, which are decades of hand-tuned assembly. Closing
-that gap is a different project than understanding autodiff, so it is out of
-scope by choice.
+`nabla` is expected to be slower. The matmul here is a plain triple loop that
+OpenMP splits across cores — no cache blocking, no SIMD kernels, no BLAS.
+PyTorch dispatches to MKL or OpenBLAS, which are decades of hand-tuned assembly.
+Closing that gap is a different project than understanding autodiff, so it is
+out of scope by choice.
 
 ---
 
@@ -459,6 +474,22 @@ several places before a step. In a training loop that is
 `std::vector<Tensor>` and never includes `nn.hpp`. That one-way dependency is
 what keeps the two halves of the library independent.
 
+**Every grad element has one writer.** `matmul`'s backward is two loops: A's
+grad is split over threads by its rows `i`, B's grad by its rows `p`. B's
+`grad[p, j]` gets a term from every row of A, so one loop split by `i` would
+have threads adding into the same element and losing updates. With one writer
+per element, each sum is added in the same order on any number of threads, so 6
+threads give the same bits as one. Splitting the loops also took one thread from
+about 47 s to about 17 s per epoch: the inner loop for B's grad now walks memory
+in order instead of jumping a whole row per step, which is what the cache wants.
+
+**More threads is not faster.** The Ryzen 7 7445HS has 6 cores with 2 hardware
+threads each. On all 12, an epoch took roughly twice as long as on 6: two
+threads on one core share its arithmetic units, and OpenMP's idle threads spin
+while the main thread runs the parts that are not parallel (`add`, `relu`,
+Adam), taking the core it shares with them. `OMP_WAIT_POLICY=passive` makes idle
+threads sleep instead, which brought 12 threads back to about 6.6 s.
+
 ---
 
 ## Roadmap
@@ -471,7 +502,7 @@ what keeps the two halves of the library independent.
       `softmax_cross_entropy`, and the XOR example
 - [x] M5 · Optimisers: SGD with momentum, Adam, gradient clipping, cosine LR schedule
 - [x] M6 · MNIST: IDX loader, batching, `Dropout`, and an MLP at about 98% test accuracy
-- [ ] M7 · Checkpoints (done), OpenMP matmul, and a benchmark against PyTorch
+- [ ] M7 · Checkpoints and OpenMP matmul (done), benchmark against PyTorch
 
 Further out:
 
