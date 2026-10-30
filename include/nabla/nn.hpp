@@ -5,6 +5,7 @@
 #include <initializer_list>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 namespace nabla {
@@ -61,6 +62,39 @@ class Tanh : public Module {
 class Sigmoid : public Module {
   public:
     Tensor forward(const Tensor &x) override { return sigmoid(x); }
+};
+
+// Inverted dropout. In training each value is kept with probability 1 - p
+// and divided by 1 - p, or else set to 0, so every output keeps the same
+// expected value; each call draws a new mask. In eval it returns x as it is,
+// and because of the division in training, eval needs no rescaling. The
+// layer keeps a reference to rng, so rng must outlive it.
+class Dropout : public Module {
+  public:
+    Dropout(float p, std::mt19937 &rng) : p_(p), rng_(rng) {
+        if (!(p >= 0.0f && p < 1.0f)) {
+            throw std::invalid_argument("Dropout: p must be in [0, 1)");
+        }
+    }
+
+    Tensor forward(const Tensor &x) override {
+        if (!is_training()) {
+            return x;
+        }
+        std::bernoulli_distribution keep(1.0f - p_);
+        const float scale = 1.0f / (1.0f - p_);
+        Tensor mask = Tensor::zeros(x.rows(), x.cols());
+        for (std::size_t r = 0; r < x.rows(); ++r) {
+            for (std::size_t c = 0; c < x.cols(); ++c) {
+                mask.at(r, c) = keep(rng_) ? scale : 0.0f;
+            }
+        }
+        return mul(x, mask);
+    }
+
+  private:
+    float p_;
+    std::mt19937 &rng_;
 };
 
 class Sequential : public Module {

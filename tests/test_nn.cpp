@@ -1,5 +1,5 @@
 // M4: sigmoid, modules (Linear, activations, Sequential) and the two fused
-// losses. Grouped by step, in the order of the M4 plan.
+// losses, then M6's Dropout. Grouped by step, in the order of the plan.
 #include "gradcheck.hpp"
 #include "harness.hpp"
 #include "nabla/nabla.hpp"
@@ -406,4 +406,109 @@ TEST(gc_mlp) {
         model.parameters());
     CHECK(r.checked == 26);
     CHECK_GRAD(r);
+}
+
+// --- M6.6 Dropout ----------------------------------------------------------
+
+TEST(dropout_eval_is_identity) {
+    std::mt19937 rng(0);
+    nabla::Dropout drop(0.25f, rng);
+    drop.eval();
+    const auto x = rand_tensor(3, 4, 80);
+    CHECK(same_values(drop.forward(x), x));
+}
+
+// eval() on a Sequential has to reach the Dropout inside it
+TEST(dropout_eval_through_sequential) {
+    std::mt19937 rng(0);
+    nabla::Sequential model{std::make_shared<nabla::Dropout>(0.5f, rng)};
+    model.eval();
+    const auto x = rand_tensor(3, 4, 81);
+    CHECK(same_values(model.forward(x), x));
+}
+
+// In training every output is 0 or x / (1 - p): with x = 3 and p = 0.25 a
+// kept value is 4. Dividing by p instead would give 12.
+TEST(dropout_train_keeps_or_zeroes) {
+    std::mt19937 rng(0);
+    nabla::Dropout drop(0.25f, rng);
+    const auto y = drop.forward(Tensor::full(4, 5, 3.0f));
+    std::size_t kept = 0;
+    std::size_t zeroed = 0;
+    for (const float v : y.impl()->data) {
+        if (std::fabs(v - 4.0f) < 1e-5f) {
+            ++kept;
+        } else if (v == 0.0f) {
+            ++zeroed;
+        }
+    }
+    CHECK(y.rows() == 4 && y.cols() == 5);
+    CHECK(kept + zeroed == 20);
+    CHECK(kept > 0 && zeroed > 0);
+}
+
+// p is the chance to drop, so about 75% of 10000 values survive p = 0.25.
+// One standard deviation is 0.4%, so 3% of slack holds for any rng.
+TEST(dropout_keeps_about_one_minus_p) {
+    std::mt19937 rng(1);
+    nabla::Dropout drop(0.25f, rng);
+    const auto y = drop.forward(Tensor::full(100, 100, 1.0f));
+    std::size_t kept = 0;
+    for (const float v : y.impl()->data) {
+        if (v != 0.0f) {
+            ++kept;
+        }
+    }
+    CHECK(std::fabs(static_cast<float>(kept) / 10000.0f - 0.75f) < 0.03f);
+}
+
+// every forward draws a new mask from the same rng
+TEST(dropout_new_mask_every_call) {
+    std::mt19937 rng(2);
+    nabla::Dropout drop(0.5f, rng);
+    const auto x = Tensor::full(4, 5, 1.0f);
+    const auto first = drop.forward(x);
+    const auto second = drop.forward(x);
+    CHECK(!same_values(first, second));
+}
+
+// The gradient flows only through kept values, scaled the same way, so
+// d y / d x is y / x everywhere: 4 / 3 where y is 4 and 0 where y is 0.
+// That only holds if forward builds y from ops such as mul, so the graph
+// records the mask.
+TEST(dropout_backward_uses_the_mask) {
+    std::mt19937 rng(3);
+    nabla::Dropout drop(0.25f, rng);
+    auto x = Tensor::full(5, 8, 3.0f);
+    x.set_requires_grad(true);
+    const auto y = drop.forward(x);
+    sum(y).backward();
+
+    bool any_dropped = false;
+    bool grads_match = y.rows() == 5 && y.cols() == 8;
+    for (std::size_t r = 0; grads_match && r < 5; ++r) {
+        for (std::size_t c = 0; c < 8; ++c) {
+            any_dropped = any_dropped || y.at(r, c) == 0.0f;
+            const float want = y.at(r, c) / 3.0f;
+            if (!(std::fabs(x.grad_at(r, c) - want) < 1e-5f)) {
+                grads_match = false;
+            }
+        }
+    }
+    CHECK(any_dropped);
+    CHECK(grads_match);
+}
+
+// p = 1 would divide by 0, and a negative p means nothing
+TEST(dropout_rejects_bad_p) {
+    std::mt19937 rng(0);
+    for (const float p : {1.0f, -0.1f}) {
+        bool threw = false;
+        try {
+            nabla::Dropout drop(p, rng);
+        } catch (const std::invalid_argument &) {
+            threw = true;
+        }
+        CHECK(threw);
+    }
 }
