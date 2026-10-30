@@ -88,7 +88,7 @@ Leaf gradients accumulate across `backward()` calls, so every step starts with
 A learning-grade automatic differentiation engine, written to understand how
 PyTorch's `autograd` actually works — and then made fast enough and complete
 enough to train a real model on a real dataset. It is built in numbered
-milestones; M0 to M5 are done.
+milestones; M0 to M6 are done.
 
 **What it has today**
 
@@ -96,11 +96,13 @@ milestones; M0 to M5 are done.
 - Ops: `matmul`, `add` with row broadcasting, element-wise `mul`, `relu`, `tanh`,
   `sigmoid`, and `sum`
 - `mse_loss`, and a fused, numerically stable `softmax_cross_entropy`
-- `Module`, `Linear` with He initialisation, `ReLU`, `Tanh`, `Sigmoid`, and
-  `Sequential`, with `train()` / `eval()`
+- `Module`, `Linear` with He initialisation, `ReLU`, `Tanh`, `Sigmoid`, inverted
+  `Dropout`, and `Sequential`, with `train()` / `eval()`
 - `NoGradGuard` for inference without building a graph
 - `SGD` with momentum and weight decay, `Adam`, `clip_grad_norm`, and a cosine
   LR schedule with linear warmup
+- An MNIST pipeline: a parser for the original IDX files, pixel normalisation,
+  shuffled mini-batches, and a batched `evaluate()`
 - A finite-difference gradient checker that tests every op, both losses, and a
   full two-layer MLP
 - `Scalar`, the single-number engine from M0 that the tensor version grew out of
@@ -108,8 +110,6 @@ milestones; M0 to M5 are done.
 
 **Planned** (see [Roadmap](#roadmap))
 
-- MNIST loader that parses the original IDX files, `Dropout`, and an MLP that
-  trains to about 98% test accuracy (M6)
 - Checkpoint save/load and OpenMP on the matmul loop (M7)
 
 **What it deliberately doesn't have**
@@ -143,15 +143,16 @@ cmake --build build -j
 
 Requires a C++23 compiler and CMake 3.20 or newer (the first version that
 accepts `CMAKE_CXX_STANDARD 23`). Tested on GCC 16.2 and
-Clang 22.1 on Linux. The CMake file passes GCC/Clang warning flags, so MSVC is
+Clang 23.1 on Linux. The CMake file passes GCC/Clang warning flags, so MSVC is
 not supported as is.
 
-The build makes four targets:
+The build makes five targets:
 
 | Target             | What it is                                       |
 | ------------------ | ------------------------------------------------ |
 | `nabla_tests`      | The test suite (`tests/*.cpp`)                   |
 | `xor`              | The XOR example above                            |
+| `mnist_mlp`        | The MNIST trainer, see [Results](#results)       |
 | `nabla`            | The M0 `Scalar` demo in `src/main.cpp`           |
 | `harness_selftest` | Checks the test harness itself                   |
 
@@ -323,20 +324,35 @@ opt.step();
 
 ## Results
 
-<!-- TODO: fill in after training (M6). Do not publish numbers you have not measured. -->
+[`examples/mnist_mlp.cpp`](examples/mnist_mlp.cpp) trains this MLP on MNIST:
+`784 → 256 → ReLU → Dropout(0.2) → 128 → ReLU → Dropout(0.2) → 10`
 
-Planned model: `784 → 256 → ReLU → Dropout(0.2) → 128 → ReLU → Dropout(0.2) → 10`
+|                |                                                           |
+| -------------- | --------------------------------------------------------- |
+| Parameters     | 235,146                                                   |
+| Test accuracy  | 98.40% after 15 epochs, and 98% or more from epoch 5      |
+| Time per epoch | about 47 s on one core                                    |
+| Epochs         | 15                                                        |
+| Batch size     | 64                                                        |
+| Optimiser      | Adam, lr 1e-3, cosine decay after half an epoch of warmup |
+| Gradient clip  | global norm 1.0                                           |
+| Machine        | AMD Ryzen 7 7445HS, GCC 16.2, Release build (`-O3`)       |
 
-|                |                                          |
-| -------------- | ---------------------------------------- |
-| Parameters     | 235,146                                  |
-| Test accuracy  | _TBD_                                    |
-| Time per epoch | _TBD_                                    |
-| Epochs         | 15                                       |
-| Optimiser      | AdamW, lr 1e-3, cosine decay with warmup |
-| Machine        | _TBD_                                    |
+```
+epoch 1  loss 0.5573  accuracy 95.47%  time 48.37s
+epoch 5  loss 0.0743  accuracy 98.05%  time 46.42s
+epoch 10  loss 0.0266  accuracy 98.32%  time 46.40s
+epoch 15  loss 0.0130  accuracy 98.40%  time 46.95s
+```
 
-The MNIST example does not exist yet; it arrives in M6.
+To run it, from the repository root, since it reads `data/`:
+
+```bash
+./scripts/get_mnist.sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j --target mnist_mlp
+./build/mnist_mlp --epochs 15 --batch 64 --lr 1e-3
+```
 
 ---
 
@@ -400,7 +416,7 @@ what keeps the two halves of the library independent.
 - [x] M4 · `Module`, `Linear`, `Sequential`, activations, `mse_loss`,
       `softmax_cross_entropy`, and the XOR example
 - [x] M5 · Optimisers: SGD with momentum, Adam, gradient clipping, cosine LR schedule
-- [ ] M6 · MNIST: IDX loader, batching, `Dropout`, and an MLP at about 98% test accuracy
+- [x] M6 · MNIST: IDX loader, batching, `Dropout`, and an MLP at about 98% test accuracy
 - [ ] M7 · Checkpoints, OpenMP matmul, and a benchmark against PyTorch
 
 Further out:
